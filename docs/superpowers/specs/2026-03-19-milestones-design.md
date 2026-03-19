@@ -14,6 +14,15 @@ Concrete implementation milestones for GBPTrajectoryPlanner. Priority: full simu
 **Simulation phase:** M0–M6
 **ESP32/bridge phase:** M7–M9
 
+## Directory Layout
+
+Canonical layout per `CLAUDE.md`:
+- `crates/gbp-core`, `crates/gbp-agent`, `crates/gbp-comms`, `crates/gbp-map` — no_std library crates
+- `src/bins/simulator`, `src/bins/bridge`, `src/bins/visualiser` — desktop binaries, root workspace
+- `firmware/src/bins/esp32c5` — ESP32 firmware, separate workspace
+
+All `cargo` commands for the desktop crates/bins run from `/repo`. For firmware, `cd /repo/firmware` first.
+
 ---
 
 ## M0 — Foundation Crates
@@ -22,13 +31,28 @@ Concrete implementation milestones for GBPTrajectoryPlanner. Priority: full simu
 
 ### What gets built
 
+**Capacity constants (locked at M0)**
+
+```rust
+pub const MAX_NODES:          usize = 64;
+pub const MAX_EDGES:          usize = 96;
+pub const MAX_CONTROL_POINTS: usize = 16;
+pub const MAX_KNOTS:          usize = 32;
+pub const ARC_TABLE_SAMPLES:  usize = 64;
+pub const MAX_HORIZON:        usize = 12;   // K timesteps
+pub const MAX_NEIGHBOURS:     usize = 8;    // max robots tracked
+pub const MAX_PATH_EDGES:     usize = 32;
+```
+
+These drive all `heapless` collection sizes. Changing them after M0 requires a memory budget re-check.
+
 **`gbp-map`**
 - `Map`, `Node`, `Edge`, `EdgeGeometry` (line + NURBS), `SpeedProfile`, `Safety`
 - NURBS Cox-de Boor evaluation, `ArcLengthTable` (64-sample, s↔t mapping)
 - Tangent via central difference
 - A* path planning (traversal-time cost, Euclidean admissible heuristic, node-type cost hints)
 - YAML parser (feature-gated `parse`, PC only)
-- `postcard` serialization for binary map delivery
+- `postcard` round-trip serialization for binary map delivery
 
 **`gbp-core`**
 - `Factor` trait, `LinearizedFactor`, `VariableNode`
@@ -49,6 +73,7 @@ Concrete implementation milestones for GBPTrajectoryPlanner. Priority: full simu
 
 ### Verification
 - `cargo test -p gbp-map -p gbp-core -p gbp-comms -p gbp-agent`
+- `cargo build -p gbp-map -p gbp-core -p gbp-comms -p gbp-agent --target riscv32imac-unknown-none-elf --no-default-features` — confirms `no_std` without `alloc` (run from `/repo`, requires the target installed)
 - Key tests:
   - NURBS eval accuracy vs. known control point positions
   - Arc-length table interpolation error on a curved edge
@@ -57,6 +82,8 @@ Concrete implementation milestones for GBPTrajectoryPlanner. Priority: full simu
   - `InterRobotFactor` precision matrix is symmetric and correct
   - `InterRobotFactorSet::remove` patches indices correctly after swap-remove
   - Trapezoidal profile: `v_nom = 0` at `s = edge_length`, full nominal well before end
+  - Near-capacity collections: construct a `Map` with exactly `MAX_EDGES` edges; confirm no panic
+  - `postcard` round-trip: serialize a `Map` to bytes, deserialize, compare all fields
 
 ---
 
@@ -127,6 +154,7 @@ Concrete implementation milestones for GBPTrajectoryPlanner. Priority: full simu
 ### Verification
 - Robot B placed behind Robot A on same edge, both assigned goals past the edge end
 - B slows to maintain `d_safe` clearance, A continues at nominal
+- Integration test: log the 3D distance between robots at every step; assert minimum observed distance >= `d_safe` (0.3 m from `test_loop_map.yaml`) over the full run
 - Belief tubes visible and shrinking/expanding correctly
 - Unit test: `InterRobotFactorSet::remove` with 3 entries — verify index patching after each removal
 
@@ -152,7 +180,8 @@ Concrete implementation milestones for GBPTrajectoryPlanner. Priority: full simu
 - Two robots assigned routes converging at a merge node simultaneously
 - One robot holds back (belief tube shows near-zero velocity), other passes through
 - After leader clears the merge, follower accelerates through
-- Visual confirmation of factor line appearing and disappearing at the right moment
+- Factor lifecycle assertion: log the simulator step at which the inter-robot factor is first spawned (must be before either robot reaches the shared edge) and the step at which it is removed (must be after the leader has fully cleared the merge node, i.e. its `position_s` has advanced past `edge.length` on the post-merge edge)
+- Integration test: minimum 3D distance between the two robots over the full scenario must be >= `d_safe`
 
 ---
 
@@ -189,6 +218,8 @@ Concrete implementation milestones for GBPTrajectoryPlanner. Priority: full simu
 
 **Goal:** Blocked edge handling, live parameter tuning, map live-reload, log panel.
 
+> Note: map live-reload is listed as future work in `gbp_merge_design.md`. It is promoted to M6 here because it is required for the robustness goal (recover from map changes without losing in-flight robots) and because the simulator has direct file access — no Bevy asset hot-reload complexity needed on the server side.
+
 ### What gets built
 
 **Simulator**
@@ -223,8 +254,8 @@ Concrete implementation milestones for GBPTrajectoryPlanner. Priority: full simu
 ### Verification
 - Single ESP32 running GBP; `defmt` logs show belief means updating each step
 - Velocity output non-zero and within expected range
-- Memory budget check: all components fit within ~250 KB SRAM
-- `cargo size` output reviewed against budget table in design doc
+- Memory budget check: `cargo size` output reviewed against the budget table in `gbp_merge_design.md`; all components fit within ~250 KB SRAM
+- `cargo clippy` passes in firmware workspace with no warnings; `clippy::mem_forget` and `clippy::large_stack_frames` deny lints remain active
 
 ---
 
@@ -244,6 +275,7 @@ Concrete implementation milestones for GBPTrajectoryPlanner. Priority: full simu
 - Hardware robot's belief tubes and factor lines appear correctly
 - Hardware robot negotiates with simulated neighbours (inter-robot factors spawn between hardware and simulated robots)
 - defmt logs from ESP32 appear in visualiser log panel
+- A* location check: `nm` or `cargo size --format=sysv` on the ESP32 binary confirms no A* symbols are present (A* must run only on the bridge, not the firmware)
 
 ---
 
@@ -261,6 +293,7 @@ Concrete implementation milestones for GBPTrajectoryPlanner. Priority: full simu
 - Start with 4 simulated robots; migrate 2 to hardware one at a time
 - Fleet continues negotiating without interruption during each migration
 - Mixed fleet (2 sim + 2 hardware) runs in random trajectory mode without collision
+- Clock drift check: bridge logs a warning when the timestamp difference between a simulated robot and a hardware robot exceeds 50 ms; no such warning observed during a 60-second run under normal conditions
 
 ---
 
@@ -288,7 +321,8 @@ Each milestone depends on all prior milestones. No parallel tracks — the syste
 
 ## Open Questions (post-M9)
 
-- Arc-length table resolution: validate `ARC_TABLE_SAMPLES=64` interpolation error on sharpest NURBS curves
+- Arc-length table resolution: validate `ARC_TABLE_SAMPLES=64` interpolation error on sharpest NURBS curves (addressed partially by M0 near-capacity test, full tolerance validation deferred)
 - A* on ESP32: map fits in RAM; on-device replanning is feasible future work
 - `σ_dyn` per edge type: ramps may warrant tighter dynamics than flat straights
-- Hybrid time sync: full alignment strategy if clock drift causes issues in practice
+- Hybrid time sync: 50 ms threshold in M9 is a starting point; full alignment strategy (NTP, PTP, or bridge-side correction) deferred if drift causes issues in practice
+- Robot ID assignment: MAC-based approach works; NVS flash or bridge-assigned IDs at boot are future options
