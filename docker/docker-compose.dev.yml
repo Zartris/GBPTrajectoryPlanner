@@ -26,6 +26,8 @@ services:
       - ${HOME}/.vscode:/home/${USER}/.vscode
       - ${HOME}/.ssh:/home/${USER}/.ssh:ro
       - ${HOME}/.gitconfig:/home/${USER}/.gitconfig:ro
+      # gh CLI auth — auth once on host with `gh auth login`, persists across rebuilds
+      - ${HOME}/.config/gh:/home/${USER}/.config/gh
     stdin_open: true
     tty: true
     working_dir: /repo

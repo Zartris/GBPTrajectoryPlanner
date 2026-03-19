@@ -31,6 +31,14 @@ RUN <<EOF
         tmux
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs
+    # GitHub CLI (gh) — auth config mounted from host via docker-compose, so no re-auth on rebuild
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list
+    apt-get update
+    apt-get install -y gh
     git lfs install --system
     apt-get clean -y
     rm -rf /var/lib/apt/lists/* /tmp/library-scripts
