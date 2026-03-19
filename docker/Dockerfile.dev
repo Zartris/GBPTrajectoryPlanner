@@ -42,11 +42,6 @@ RUN <<EOF
     usermod -aG dialout,plugdev ${CONTAINER_USER}
     echo "${CONTAINER_USER}    ALL=(ALL:ALL) NOPASSWD: ALL" >>/etc/sudoers
 EOF
-
-COPY --chown=${CONTAINER_USER}:${CONTAINER_USER} tmux.conf /home/${CONTAINER_USER}/.tmux.conf
-COPY welcome.sh /usr/local/bin/trl-welcome
-RUN chmod +x /usr/local/bin/trl-welcome
-
 USER ${CONTAINER_USER}
 WORKDIR /home/${CONTAINER_USER}
 
@@ -84,21 +79,4 @@ RUN <<EOF
     curl -LsSf https://github.com/probe-rs/probe-rs/releases/latest/download/probe-rs-tools-installer.sh | sh
 EOF
 
-USER ${CONTAINER_USER}
-WORKDIR /workspace
-
-# Set up npm global dir and ensure ~/.local/bin is in PATH for curl-installed tools
-ENV NPM_CONFIG_PREFIX=/home/${CONTAINER_USER}/.npm-global
-ENV PATH=/home/${CONTAINER_USER}/.npm-global/bin:/home/${CONTAINER_USER}/.local/bin:$PATH
-
-RUN mkdir -p /home/${CONTAINER_USER}/.npm-global /home/${CONTAINER_USER}/.local/bin
-
-# Install Claude Code
-RUN curl -fsSL https://claude.ai/install.sh | bash
-
-# Install GitHub Copilot CLI
-RUN curl -fsSL https://gh.io/copilot-install | bash
-
-# Install OpenCode
-RUN curl -fsSL https://opencode.ai/install | bash
 CMD "/bin/bash"

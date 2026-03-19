@@ -790,10 +790,13 @@ fn basis_functions(
     t: f32,
     p: usize,
     knots: &heapless::Vec<f32, MAX_KNOTS>,
-) -> [f32; 9] { // max degree 8 (always use degree+1 values)
-    let mut b = [0.0f32; 9];
-    let mut left  = [0.0f32; 9];
-    let mut right = [0.0f32; 9];
+) -> [f32; 16] { // degree+1 values; sized for max degree 15 (MAX_CONTROL_POINTS-1)
+    // Guard: loop writes indices 0..=p, so p must be < 16.
+    // With MAX_CONTROL_POINTS=16 and clamped knot vectors, realistic degree ≤ 15.
+    debug_assert!(p < 16, "degree {} exceeds basis_functions array capacity (max 15)", p);
+    let mut b = [0.0f32; 16];
+    let mut left  = [0.0f32; 16];
+    let mut right = [0.0f32; 16];
     b[0] = 1.0;
     for j in 1..=p {
         left[j]  = t - knots[span + 1 - j];
@@ -1066,6 +1069,13 @@ Add to all types in `map.rs`:
 ```rust
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 ```
+
+- [ ] **Step 1b: Run to confirm the postcard test fails**
+
+```bash
+cargo test -p gbp-map --features "serde" --test map_test -- postcard_round_trip 2>&1 | head -15
+```
+Expected: compile error (serde derives not yet added to map types).
 
 - [ ] **Step 2: Implement `parser.rs`** (PC only, feature-gated)
 
@@ -1864,6 +1874,13 @@ fn robot_broadcast_default_is_valid() {
 }
 ```
 
+- [ ] **Step 1b: Run to confirm the test fails**
+
+```bash
+cargo test -p gbp-comms 2>&1 | head -10
+```
+Expected: compile error — `gbp-comms/tests/comms_test.rs` references types not yet defined.
+
 - [ ] **Step 2: Implement `gbp-comms/src/lib.rs`**
 
 ```rust
@@ -2037,6 +2054,13 @@ fn v_nom_nominal_on_intermediate_edge() {
 }
 ```
 
+- [ ] **Step 1b: Run to confirm failure**
+
+```bash
+cargo test -p gbp-agent --test trajectory_test 2>&1 | head -10
+```
+Expected: compile error — `trajectory` module not yet implemented.
+
 - [ ] **Step 2: Implement `trajectory.rs`**
 
 ```rust
@@ -2188,6 +2212,13 @@ fn remove_last_does_not_need_patching() {
 }
 ```
 
+- [ ] **Step 1b: Run to confirm failure**
+
+```bash
+cargo test -p gbp-agent --test interrobot_set_test 2>&1 | head -10
+```
+Expected: compile error — `interrobot_set` module not yet implemented.
+
 - [ ] **Step 2: Implement `interrobot_set.rs`**
 
 ```rust
@@ -2322,6 +2353,13 @@ fn step_produces_nonzero_velocity_when_trajectory_set() {
     assert!(output.velocity > 0.0, "velocity should be positive after step");
 }
 ```
+
+- [ ] **Step 1b: Run to confirm failure**
+
+```bash
+cargo test -p gbp-agent --test robot_agent_test 2>&1 | head -10
+```
+Expected: compile error — `robot_agent` module not yet implemented.
 
 - [ ] **Step 2: Implement `robot_agent.rs`**
 
