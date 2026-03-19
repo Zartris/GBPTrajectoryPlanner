@@ -166,10 +166,11 @@ impl Map {
     }
 
     /// Evaluate 3D position at arc-length s along edge.
-    pub fn eval_position(&self, edge_id: EdgeId, s: f32) -> [f32; 3] {
-        let idx = self.edge_index(edge_id).expect("edge not found");
+    /// Returns `None` if `edge_id` is not found in the map.
+    pub fn eval_position(&self, edge_id: EdgeId, s: f32) -> Option<[f32; 3]> {
+        let idx = self.edge_index(edge_id)?;
         let edge = &self.edges[idx];
-        match &edge.geometry {
+        Some(match &edge.geometry {
             EdgeGeometry::Line { start, end, length } => {
                 let t = if *length > 1e-9 { (s / length).clamp(0.0, 1.0) } else { 0.0 };
                 [
@@ -182,17 +183,18 @@ impl Map {
                 let t = crate::nurbs::arc_s_to_t(s, n);
                 crate::nurbs::eval_point(t, &n.control_points, &n.knots, n.degree as usize)
             }
-        }
+        })
     }
 
     /// Evaluate unit tangent at arc-length s along edge.
-    pub fn eval_tangent(&self, edge_id: EdgeId, s: f32) -> [f32; 3] {
-        let idx = self.edge_index(edge_id).expect("edge not found");
+    /// Returns `None` if `edge_id` is not found in the map.
+    pub fn eval_tangent(&self, edge_id: EdgeId, s: f32) -> Option<[f32; 3]> {
+        let idx = self.edge_index(edge_id)?;
         let edge = &self.edges[idx];
-        match &edge.geometry {
+        Some(match &edge.geometry {
             EdgeGeometry::Line { start, end, length } => {
                 let len = *length;
-                if len < 1e-9 { return [1.0, 0.0, 0.0]; }
+                if len < 1e-9 { return Some([1.0, 0.0, 0.0]); }
                 [
                     (end[0] - start[0]) / len,
                     (end[1] - start[1]) / len,
@@ -203,6 +205,6 @@ impl Map {
                 let t = crate::nurbs::arc_s_to_t(s, n);
                 crate::nurbs::eval_tangent(t, &n.control_points, &n.knots, n.degree as usize)
             }
-        }
+        })
     }
 }

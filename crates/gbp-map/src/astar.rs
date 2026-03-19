@@ -32,15 +32,16 @@ pub fn astar(map: &Map, start: NodeId, goal: NodeId) -> Option<Vec<EdgeId, MAX_P
     while !open.is_empty() {
         // Pop node with lowest f_score
         let (best_pos, _) = open.iter().enumerate()
-            .min_by(|(_, a), (_, b)| a.0.partial_cmp(&b.0).unwrap())?;
+            .min_by(|(_, a), (_, b)| a.0.partial_cmp(&b.0).unwrap_or(core::cmp::Ordering::Equal))?;
         let (_, current) = open.swap_remove(best_pos);
 
         if current == goal_idx {
             return reconstruct_path(map, &came_from, goal_idx);
         }
 
-        // Expand neighbours via outgoing edges
-        for &edge_idx in map.outgoing[current].iter() {
+        // Expand neighbours via outgoing edges (outgoing is indexed by NodeId.0, not Vec position)
+        let current_node_id = map.nodes[current].id.0 as usize;
+        for &edge_idx in map.outgoing[current_node_id].iter() {
             let edge = &map.edges[edge_idx as usize];
             let neighbor_idx = map.node_index(edge.end)?;
 

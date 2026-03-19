@@ -46,7 +46,7 @@ impl<C: CommsInterface> RobotAgent<C> {
         for k in 0..NUM_DYN_FACTORS {
             let idx = graph.add_factor(FactorKind::Dynamics(
                 DynamicsFactor::new([k, k + 1], DT, 0.5, 0.0)
-            )).expect("dynamics factor capacity");
+            )).expect("BUG: MAX_FACTORS < K+1 dynamics factors — check capacity constants");
             dyn_indices[k] = idx;
         }
 

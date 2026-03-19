@@ -12,7 +12,7 @@ fn edges_1m_each() -> heapless::Vec<(EdgeId, f32), 32> {
 #[test]
 fn local_s_on_first_edge() {
     let t = Trajectory::new(edges_1m_each(), 0.0);
-    let (edge, local_s, is_final) = t.edge_and_local_s(0.5);
+    let (edge, local_s, is_final) = t.edge_and_local_s(0.5).unwrap();
     assert_eq!(edge, EdgeId(0));
     assert!((local_s - 0.5).abs() < 1e-5);
     assert!(!is_final);
@@ -21,7 +21,7 @@ fn local_s_on_first_edge() {
 #[test]
 fn local_s_on_second_edge() {
     let t = Trajectory::new(edges_1m_each(), 0.0);
-    let (edge, local_s, is_final) = t.edge_and_local_s(1.7);
+    let (edge, local_s, is_final) = t.edge_and_local_s(1.7).unwrap();
     assert_eq!(edge, EdgeId(1));
     assert!((local_s - 0.7).abs() < 1e-5);
     assert!(!is_final);
@@ -30,7 +30,7 @@ fn local_s_on_second_edge() {
 #[test]
 fn local_s_on_final_edge() {
     let t = Trajectory::new(edges_1m_each(), 0.0);
-    let (edge, local_s, is_final) = t.edge_and_local_s(2.5);
+    let (edge, local_s, is_final) = t.edge_and_local_s(2.5).unwrap();
     assert_eq!(edge, EdgeId(2));
     assert!((local_s - 0.5).abs() < 1e-5);
     assert!(is_final);
