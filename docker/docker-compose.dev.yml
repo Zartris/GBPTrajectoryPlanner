@@ -24,6 +24,8 @@ services:
       - ${HOME}/.opencode:/home/${USER}/.opencode
       - ${HOME}/.config/opencode:/home/${USER}/.config/opencode
       - ${HOME}/.vscode:/home/${USER}/.vscode
+      - ${HOME}/.ssh:/home/${USER}/.ssh:ro
+      - ${HOME}/.gitconfig:/home/${USER}/.gitconfig:ro
     stdin_open: true
     tty: true
     working_dir: /repo
