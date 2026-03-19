@@ -17,4 +17,5 @@ pub mod astar;
 #[cfg(feature = "parse")]
 pub mod parser;
 
-// Re-exports will be added as modules are implemented
+pub use map::{EdgeGeometry, EdgeId, Map, Node, NodeId, NodeType, SafetyProfile, SpeedProfile};
+pub use nurbs::ArcLengthTable;
