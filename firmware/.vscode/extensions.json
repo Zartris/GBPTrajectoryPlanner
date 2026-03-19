@@ -2,7 +2,6 @@
     "recommendations": [
         "rust-lang.rust-analyzer",
         "tamasfe.even-better-toml",
-        "Wokwi.wokwi-vscode",
         "probe-rs.probe-rs-debugger",
         "fill-labs.dependi"
     ]

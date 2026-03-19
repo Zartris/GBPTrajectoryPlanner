@@ -807,6 +807,22 @@ defmt        = "0.3"
 defmt-rtt    = "0.4"
 ```
 
+### Module structure
+
+`main.rs` is kept minimal — it initialises hardware, allocates statics, and spawns tasks. All logic lives in dedicated modules so individual subsystems can be swapped or disabled without touching `main.rs`.
+
+```
+src/bins/esp32c5/src/
+├── bin/
+│   └── main.rs          # init, mk_static! allocations, spawner calls only
+├── gbp.rs               # gbp_task — RobotAgent step loop
+├── physics.rs           # physics_task — arc-length integration (s += v·dt)
+├── comms.rs             # vis_task — ESP-NOW serialise + send to bridge
+└── lib.rs               # re-exports, shared statics (channels, map ref)
+```
+
+Adding a new subsystem (e.g. sensor fusion, LED status): create a new module, expose one `#[embassy_executor::task]` function, add one `spawner.spawn()` line in `main.rs`. No other files change.
+
 ### Embassy tasks
 
 ```rust

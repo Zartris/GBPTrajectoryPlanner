@@ -1,0 +1,29 @@
+services:
+  gbptrajectoryplanner:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        USERNAME: ${USER}
+        USER_UID: ${UID:-1000}
+        USER_GID: ${GID:-1000}
+    image: gbptrajectoryplanner
+    container_name: gbptrajectoryplanner-sandbox
+    volumes:
+      # Mount project files — changes sync both ways
+      - ..:/repo
+      # Mount repo-level (local/project) configs
+      - ../.claude:/repo/.claude
+      - ../.github:/repo/.github
+      - ../.opencode:/repo/.opencode
+      - ../.vscode:/repo/.vscode
+      # Mount global-level (user) configs
+      - ${HOME}/.claude:/home/${USER}/.claude
+      - ${HOME}/.copilot:/home/${USER}/.copilot
+      - ${HOME}/.github:/home/${USER}/.github
+      - ${HOME}/.opencode:/home/${USER}/.opencode
+      - ${HOME}/.config/opencode:/home/${USER}/.config/opencode
+      - ${HOME}/.vscode:/home/${USER}/.vscode
+    stdin_open: true
+    tty: true
+    working_dir: /repo

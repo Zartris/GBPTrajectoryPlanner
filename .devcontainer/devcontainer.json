@@ -1,14 +1,7 @@
 {
     "name": "Valhalla",
-    // Comment the image and use the build property to build the image from the
-    // Dockerfile instead of downloading it from https://hub.docker.com/r/espressif/rust-nostd-training
-    // "image": "docker.io/espressif/rust-nostd-training",
-    "build": {
-        "dockerfile": "Dockerfile",
-        "args": {
-            "RUST_CHANNEL": "stable"
-        }
-    },
+    "dockerComposeFile": "../docker/docker-compose.dev.yml",
+    "service": "gbptrajectoryplanner",
     "customizations": {
         "vscode": {
             "settings": {
@@ -39,21 +32,18 @@
                 "spencerwmiles.vscode-task-buttons",
                 "mhutchie.git-graph",
                 "bierner.markdown-mermaid",
-                "rainlei.bitfrog-copilot"
+                "rainlei.bitfrog-copilot",
+                "anthropic.claude-code"
             ]
         }
     },
-    "remoteUser": "esp",
-    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
-    "workspaceFolder": "/workspace",
-    "workspaceFile": "/workspace/project.code-workspace",
+    "remoteUser": "${localEnv:USER}",
     "privileged": true,
+    "workspaceFolder": "/repo",
     "mounts": [
         "source=/dev,target=/dev,type=bind,consistency=cached",
         "source=/run/udev,target=/run/udev,type=bind,consistency=cached",
-        "source=${localEnv:HOME}/.ssh,target=/home/esp/.ssh,type=bind,readonly",
-        "source=${localEnv:HOME}/.claude,target=/home/esp/.claude,type=bind",
-        "source=${localEnv:HOME}/.claude.json,target=/home/esp/.claude.json,type=bind",
-        "source=${localEnv:HOME}/.copilot,target=/home/esp/.copilot,type=bind"
+        "source=${localEnv:HOME}/.ssh,target=/home/${localEnv:USER}/.ssh,type=bind,readonly",
+        "source=${localEnv:HOME}/.claude.json,target=/home/${localEnv:USER}/.claude.json,type=bind"
     ]
 }

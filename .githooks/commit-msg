@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Strip AI agent co-author credits from commit messages.
+# Removes lines matching Co-Authored-By / Co-authored-by with known AI agents,
+# and the "Generated with Claude Code" footer line.
+
+COMMIT_MSG_FILE="$1"
+
+sed -i \
+  -e '/^Co-[Aa]uthored-[Bb]y:.*[Cc]laude/d' \
+  -e '/^Co-[Aa]uthored-[Bb]y:.*[Gg]emini/d' \
+  -e '/^Co-[Aa]uthored-[Bb]y:.*[Cc]opilot/d' \
+  -e '/^Co-[Aa]uthored-[Bb]y:.*[Cc]ursor/d' \
+  -e '/^Co-[Aa]uthored-[Bb]y:.*noreply@anthropic\.com/d' \
+  -e '/^Co-[Aa]uthored-[Bb]y:.*noreply@github\.com/d' \
+  -e '/🤖 Generated with \[Claude Code\]/d' \
+  "$COMMIT_MSG_FILE"
+
+# Remove trailing blank lines left behind
+sed -i -e 's/[[:space:]]*$//' -e '/./,$!d' "$COMMIT_MSG_FILE"

@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": { "tool_name": "Edit", "file_path": "firmware/.*\\.rs$" },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /repo/firmware && cargo clippy 2>&1 | head -30 || true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": { "tool_name": "Edit", "file_path": "Cargo\\.lock$" },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Cargo.lock should not be manually edited'; exit 2"
+          }
+        ]
+      }
+    ]
+  }
+}
