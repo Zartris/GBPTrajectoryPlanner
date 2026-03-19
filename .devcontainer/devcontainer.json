@@ -38,13 +38,15 @@
                 "probe-rs.probe-rs-debugger",
                 "spencerwmiles.vscode-task-buttons",
                 "mhutchie.git-graph",
-                "bierner.markdown-mermaid"
+                "bierner.markdown-mermaid",
+                "rainlei.bitfrog-copilot"
             ]
         }
     },
     "remoteUser": "esp",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
     "workspaceFolder": "/workspace",
+    "workspaceFile": "/workspace/project.code-workspace",
     "privileged": true,
     "mounts": [
         "source=/dev,target=/dev,type=bind,consistency=cached",

@@ -14,8 +14,9 @@ RUN <<EOF
     set -eu
     apt-get update
     apt-get install -y \
-        git curl ninja-build llvm-dev libclang-dev \
+        git git-lfs curl ninja-build llvm-dev libclang-dev \
         clang unzip python3 python3-pip pkg-config libssl-dev sudo
+    git lfs install --system
     apt-get clean -y
     rm -rf /var/lib/apt/lists/* /tmp/library-scripts
 EOF

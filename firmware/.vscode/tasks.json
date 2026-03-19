@@ -2,7 +2,7 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "build",
+            "label": "build -- esp32c5",
             "type": "shell",
             "command": "cargo build --release",
             "group": "build",
@@ -16,7 +16,7 @@
             ]
         },
         {
-            "label": "build-debug",
+            "label": "build-debug -- esp32c5",
             "type": "shell",
             "command": "cargo build",
             "group": "build",

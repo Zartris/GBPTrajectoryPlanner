@@ -1,0 +1,1719 @@
+# ============================================================================
+# TOP-LEVEL STRUCTURE DOCUMENTATION
+# ============================================================================
+# format_version: (string) Schema version identifier, e.g., "1.0"
+# map_id: (string) Unique identifier for this specific map
+# metadata: (object) Descriptive information about the map
+#   description: (string) Human-readable description
+#   coordinate_frame: (string) Reference frame, typically "map"
+#   units: (object) Unit specifications
+#     length: (string) Distance unit, e.g., "m" for meters
+#     angle: (string) Angular unit, e.g., "rad" for radians
+# tags: (object) Map-level key-value metadata pairs
+# ============================================================================
+
+format_version: "1.0"
+map_id: "test_loop"
+metadata:
+  description: "Simple test loop with multiple merges and diverts for simulation and CI"
+  coordinate_frame: "map"
+  units:
+    length: "m"
+    angle: "rad"
+
+tags:
+  environment: "simulation"
+  revision: 1
+
+# ============================================================================
+# NODES DOCUMENTATION
+# ============================================================================
+# NODES: (array of objects) Waypoints, intersections, decision points
+# Each node contains:
+#   id: (string) Unique identifier within the map
+#   nodePosition: (object) Position and orientation data
+#     x: (number) X coordinate in meters
+#     y: (number) Y coordinate in meters  
+#     z: (number) Z coordinate in meters
+#     theta: (number) Orientation in radians (0 = facing +X direction)
+#   actions: (array of objects) Actions to perform at this node
+#     actionType: (string) Type of action: "none" | "charge" | "pickup" | "dropoff" | etc.
+#     actionDescription: (string) Human-readable description of the action
+#     blockingType: (string) Blocking behavior: "NONE" | "HARD" | "SOFT"
+#   customProperties: (object, optional) Node-specific metadata
+#
+# Common Custom Properties:
+#   zone: "loop" | "platform" - Operational area/level designation
+#   type: "divert" | "merge" | "waypoint" | "charger" - Semantic node type
+# ============================================================================
+nodes:
+  - id: "P001"
+    nodePosition:
+      x: 0.850
+      y: 8.965
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "waypoint"
+
+  - id: "P002"
+    nodePosition:
+      x: 3.545
+      y: 9.886
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "divert"
+
+  - id: "P003"
+    nodePosition:
+      x: 3.823
+      y: 9.249
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "divert"
+
+  - id: "P004"
+    nodePosition:
+      x: 3.850
+      y: 8.966
+      z: 0.000
+      theta: 0.000
+  
+    customProperties:
+      type: "divert"
+  - id: "P005"
+    nodePosition:
+      x: 3.850
+      y: 8.095
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P006"
+    nodePosition:
+      x: 3.850
+      y: 7.534
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "divert"
+
+  - id: "P007"
+    nodePosition:
+      x: 5.352
+      y: 6.278
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P008"
+    nodePosition:
+      x: 7.107
+      y: 6.277
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "merge"
+
+  - id: "P009"
+    nodePosition:
+      x: 7.877
+      y: 6.277
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P010"
+    nodePosition:
+      x: 14.472
+      y: 6.277
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "toploader"
+      name: "Toploader-01"
+
+  - id: "P011"
+    nodePosition:
+      x: 17.350
+      y: 6.277
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P012"
+    nodePosition:
+      x: 17.350
+      y: 8.005
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P013"
+    nodePosition:
+      x: 18.850
+      y: 5.021
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "merge"
+
+  - id: "P014"
+    nodePosition:
+      x: 18.850
+      y: 4.534
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "divert"
+
+  - id: "P017"
+    nodePosition:
+      x: 17.350
+      y: 1.390
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P018"
+    nodePosition:
+      x: 18.702
+      y: 2.240
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P019"
+    nodePosition:
+      x: 18.850
+      y: 2.890
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P020"
+    nodePosition:
+      x: 17.100
+      y: 2.861
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P021"
+    nodePosition:
+      x: 18.850
+      y: 6.750
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "merge"
+
+  - id: "P022"
+    nodePosition:
+      x: 17.350
+      y: 9.463
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P023"
+    nodePosition:
+      x: 18.291
+      y: 9.130
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P024"
+    nodePosition:
+      x: 8.330
+      y: 9.463
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "charger"
+      name: "Charger-01"
+
+  - id: "P025"
+    nodePosition:
+      x: 5.216
+      y: 8.005
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P026"
+    nodePosition:
+      x: 10.323
+      y: 9.463
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "charger"
+      name: "Charger-02"
+
+  - id: "P027"
+    nodePosition:
+      x: 12.582
+      y: 9.463
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "charger"
+      name: "Charger-03"
+
+  - id: "P028"
+    nodePosition:
+      x: 14.529
+      y: 1.390
+      z: 0.000
+      theta: 0.000
+    customProperties:
+      type: "merge"
+
+  - id: "P029"
+    nodePosition:
+      x: 11.436
+      y: 1.390
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P030"
+    nodePosition:
+      x: 6.399
+      y: 1.390
+      z: 1.545
+      theta: 0.000
+  
+  - id: "P031"
+    nodePosition:
+      x: 5.062
+      y: 1.390
+      z: 1.545
+      theta: 0.000
+    customProperties:
+      type: "divert"
+
+  - id: "P032"
+    nodePosition:
+      x: 2.350
+      y: 1.390
+      z: 1.545
+      theta: 0.000
+    customProperties:
+      type: "discharge"
+      name: "Discharge-01"
+
+  - id: "P033"
+    nodePosition:
+      x: 5.301
+      y: 9.463
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P034"
+    nodePosition:
+      x: 0.850
+      y: 3.190
+      z: 1.545
+      theta: 0.000
+  
+  - id: "P035"
+    nodePosition:
+      x: 0.850
+      y: 5.515
+      z: 0.817
+      theta: 0.000
+    customProperties:
+      type: "merge"
+
+  - id: "P036"
+    nodePosition:
+      x: 0.850
+      y: 8.225
+      z: 0.000
+      theta: 0.000
+  
+  - id: "P037"
+    nodePosition:
+      x: 3.805
+      y: 2.890
+      z: 1.545
+      theta: 1.57079632679
+
+  - id: "P038"
+    nodePosition:
+      x: 3.805
+      y: 4.335
+      z: 1.247
+      theta: 1.57079632679
+
+  - id: "P039"
+    nodePosition:
+      x: 2.350
+      y: 4.335
+      z: 1.247
+      theta: 0.000
+
+
+# ============================================================================
+# EDGES DOCUMENTATION
+# ============================================================================
+# EDGES: (array of objects) Connections between nodes with motion constraints
+# Each edge contains:
+#   id: (string) Unique identifier
+#   source: (string) Starting node ID
+#   target: (string) Ending node ID
+#   direction: (string) "left" | "right" | ""
+#   directionality: (string) "bidirectional" | "forward_only"
+#   geometry: (object) Path shape definition
+#     type: (string) "line" | "arc" | "spline" | "polyline"
+#     # For type="line":
+#     points: (array) Two 3D points [[x1,y1,z1], [x2,y2,z2]]
+#     length: (number) Optional explicit length in meters
+#     length_computed: (boolean) Whether length was computed vs. user-specified
+#     # For type="spline":
+#     representation: (string) "nurbs" | "cubic_bspline" | "catmull_rom" | "bezier"
+#     frame: (string) Coordinate frame, typically "map"
+#     control_points: (array) Control points defining spline shape
+#     degree: (number) Polynomial degree for NURBS (e.g., 3 for cubic)
+#     knots: (array) Knot vector for NURBS (length = n_control_points + degree + 1)
+#     weights: (array) Weights for rational curves (length = n_control_points)
+#     length_estimate: (number) Approximate arc length in meters
+#     parameterization: (string) "uniform" | "chord" | "centripetal"
+#   speed_profile: (object) Motion constraints
+#     max: (number) Maximum allowed speed [m/s]
+#     nominal: (number) Target/preferred speed [m/s]
+#     accel_limit: (number) Maximum acceleration [m/s²]
+#     decel_limit: (number) Maximum deceleration [m/s²]
+#   safety: (object) Safety parameters
+#     clearance: (number) Required separation from obstacles [meters]
+#   tags: (object) Edge-specific metadata
+#
+# Common Edge Tags:
+#   role: "charging" | "driving" | "checkup" - Primary function
+#   surface: "flat" | "ramp" - Physical surface characteristics
+#   test_edge: "true" - Marks testing/validation paths
+# ============================================================================
+edges:
+  - id: "P001 --- P002"
+    startNodeId: "P001"
+    endNodeId: "P002"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [     0.850,      8.965,     -0.000]
+        - [     0.860,      9.311,      0.002]
+        - [     1.003,      9.691,      0.001]
+        - [     1.285,     10.032,      0.002]
+        - [     1.507,     10.214,      0.002]
+        - [     1.744,     10.343,      0.002]
+        - [     1.995,     10.428,      0.002]
+        - [     2.262,     10.469,      0.001]
+        - [     2.548,     10.460,      0.002]
+        - [     2.981,     10.360,      0.001]
+        - [     3.326,     10.141,      0.002]
+        - [     3.545,      9.886,     -0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.111, 0.222, 0.333, 0.444,
+              0.556, 0.667, 0.778, 0.889, 1.000, 1.000, 1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+                1.0, 1.0]
+      length_estimate: 3.728
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P002 --- P003"
+    startNodeId: "P002"
+    endNodeId: "P003"
+    direction: "right"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [     3.545,      9.886,      0.000]
+        - [     3.571,      9.763,      0.002]
+        - [     3.735,      9.665,      0.001]
+        - [     3.794,      9.355,      0.002]
+        - [     3.823,      9.249,      0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.500, 1.000, 1.000, 1.000,
+              1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 0.704
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P002 --- P033"
+    startNodeId: "P002"
+    endNodeId: "P033"
+    direction: "left"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [     3.545,      9.886,      0.000]
+        - [     3.665,      9.757,      0.002]
+        - [     3.937,      9.604,      0.001]
+        - [     4.188,      9.504,      0.001]
+        - [     4.503,      9.466,      0.002]
+        - [     4.518,      9.463,      0.001]
+        - [     4.761,      9.466,      0.002]
+        - [     5.301,      9.463,      0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.200, 0.400, 0.600, 0.800,
+              1.000, 1.000, 1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 1.867
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P004 --- P025"
+    startNodeId: "P004"
+    endNodeId: "P025"
+    direction: "left"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [     3.850,      8.966,      0.000]
+        - [     3.960,      8.616,      0.002]
+        - [     4.348,      8.194,      0.001]
+        - [     4.916,      8.006,      0.002]
+        - [     5.216,      8.005,      0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.500, 1.000, 1.000, 1.000,
+              1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 1.788
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: "divert_right_s_to_drivethrough"
+  - id: "P006 --- P007"
+    startNodeId: "P006"
+    endNodeId: "P007"
+    direction: "left"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [     3.850,      7.534,     -0.000]
+        - [     3.954,      7.139,      0.002]
+        - [     4.316,      6.544,      0.001]
+        - [     4.986,      6.283,      0.002]
+        - [     5.352,      6.278,      0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.500, 1.000, 1.000, 1.000,
+              1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 2.115
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P011 --- P013"
+    startNodeId: "P011"
+    endNodeId: "P013"
+    direction: "right"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [    17.350,      6.277,     -0.000]
+        - [    17.644,      6.273,      0.002]
+        - [    18.046,      6.149,      0.001]
+        - [    18.569,      5.719,      0.001]
+        - [    18.763,      5.345,      0.002]
+        - [    18.850,      5.021,      0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.333, 0.667, 1.000, 1.000,
+              1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 2.115
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: "merge_toploader_to_left_drive"
+  - id: "P012 --- P021"
+    startNodeId: "P012"
+    endNodeId: "P021"
+    direction: "right"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [    17.350,      8.005,     -0.000]
+        - [    17.644,      8.000,      0.002]
+        - [    18.046,      7.877,      0.001]
+        - [    18.568,      7.446,      0.001]
+        - [    18.760,      7.074,      0.002]
+        - [    18.850,      6.750,      0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.333, 0.667, 1.000, 1.000,
+              1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 2.112
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P014 --- P020"
+    startNodeId: "P014"
+    endNodeId: "P020"
+    direction: "right"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [    18.850,      4.534,     -0.000]
+        - [    18.758,      4.239,      0.002]
+        - [    18.652,      3.955,      0.001]
+        - [    18.314,      3.622,      0.002]
+        - [    18.195,      3.538,      0.002]
+        - [    18.136,      3.503,      0.001]
+        - [    17.859,      3.326,      0.002]
+        - [    17.100,      2.861,      0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.200, 0.400, 0.600, 0.800,
+              1.000, 1.000, 1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 2.508
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P018 --- P017"
+    startNodeId: "P018"
+    endNodeId: "P017"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [    18.702,      2.240,      0.000]
+        - [    18.597,      2.030,      0.002]
+        - [    18.382,      1.766,      0.001]
+        - [    17.914,      1.472,      0.001]
+        - [    17.583,      1.393,      0.002]
+        - [    17.350,      1.390,      0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.333, 0.667, 1.000, 1.000,
+              1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 1.682
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P019 --- P018"
+    startNodeId: "P019"
+    endNodeId: "P018"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [    18.850,      2.890,      0.000]
+        - [    18.849,      2.666,      0.002]
+        - [    18.797,      2.441,      0.002]
+        - [    18.702,      2.240,      0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 1.000, 1.000, 1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0]
+      length_estimate: 0.672
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P020 --- P028"
+    startNodeId: "P020"
+    endNodeId: "P028"
+    direction: "right"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [    17.100,      2.861,     -0.000]
+        - [    15.752,      2.014,      0.002]
+        - [    15.133,      1.669,      0.001]
+        - [    14.989,      1.547,      0.002]
+        - [    14.529,      1.390,     -0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.500, 1.000, 1.000, 1.000,
+              1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 2.969
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P022 --- P023"
+    startNodeId: "P022"
+    endNodeId: "P023"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [    17.350,      9.463,      0.000]
+        - [    17.691,      9.460,      0.002]
+        - [    18.024,      9.343,      0.002]
+        - [    18.291,      9.130,     -0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 1.000, 1.000, 1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0]
+      length_estimate: 1.017
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P023 --- P021"
+    startNodeId: "P023"
+    endNodeId: "P021"
+    direction: "left"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [    18.291,      9.130,      0.000]
+        - [    18.498,      8.957,      0.002]
+        - [    18.709,      8.675,      0.001]
+        - [    18.830,      8.246,      0.002]
+        - [    18.848,      8.049,      0.001]
+        - [    18.846,      8.001,      0.002]
+        - [    18.855,      7.666,      0.001]
+        - [    18.850,      6.750,     -0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.200, 0.400, 0.600, 0.800,
+              1.000, 1.000, 1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 2.552
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P029 --- P030"
+    startNodeId: "P029"
+    endNodeId: "P030"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [    11.436,      1.390,     -0.000]
+        - [    11.160,      1.390,      0.013]
+        - [    10.836,      1.390,      0.054]
+        - [    10.769,      1.390,      0.083]
+        - [    10.626,      1.390,      0.132]
+        - [    10.527,      1.390,      0.170]
+        - [     7.412,      1.390,      1.293]
+        - [     7.315,      1.390,      1.330]
+        - [     7.167,      1.390,      1.383]
+        - [     7.109,      1.390,      1.407]
+        - [     6.575,      1.390,      1.562]
+        - [     6.399,      1.390,      1.545]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.111, 0.222, 0.333, 0.444,
+              0.556, 0.667, 0.778, 0.889, 1.000, 1.000, 1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+                1.0, 1.0]
+      length_estimate: 5.293
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: "ramp"
+      test_edge: ""
+      role: "ramp_up"
+  - id: "P032 --- P034"
+    startNodeId: "P032"
+    endNodeId: "P034"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [     2.350,      1.390,      1.545]
+        - [     2.058,      1.394,      1.545]
+        - [     1.674,      1.514,      1.545]
+        - [     1.294,      1.810,      1.545]
+        - [     1.077,      2.077,      1.545]
+        - [     0.863,      2.515,      1.545]
+        - [     0.835,      2.884,      1.545]
+        - [     0.850,      3.190,      1.545]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.200, 0.400, 0.600, 0.800,
+              1.000, 1.000, 1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 2.655
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: "platform"
+      test_edge: ""
+      role: ""
+  # Physical line is not installed yet.
+  # - id: "P031 --- P037"
+  #   startNodeId: "P031"
+  #   endNodeId: "P037"
+  #   direction: "right"
+  #   directionality: "forward_only"
+  #   geometry:
+  #     type: "spline"
+  #     representation: "nurbs"
+  #     frame: "map"
+  #     control_points:
+  #       - [     5.062,      1.390,      1.545]
+  #       - [     4.699,      1.482,      1.546]
+  #       - [     4.283,      1.719,      1.544]
+  #       - [     3.924,      2.242,      1.546]
+  #       - [     3.783,      2.733,      1.540]
+  #       - [     3.812,      3.259,      1.565]
+  #       - [     3.798,      3.786,      1.451]
+  #       - [     3.814,      4.325,      1.257]
+  #       - [     3.808,      4.332,      1.246]
+  #       - [     3.794,      4.335,      1.247]
+  #       - [     2.350,      4.335,      1.249]
+  #     degree: 3
+  #     knots: [0.000, 0.000, 0.000, 0.000, 0.125, 0.250, 0.375, 0.500,
+  #             0.625, 0.750, 0.875, 1.000, 1.000, 1.000, 1.000]
+  #     weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+  #               1.0]
+  #     length_estimate: 5.062
+  #     length_computed: true
+  #     parameterization: "centripetal"
+  #   speed_profile:
+  #     max: 2.5 # Hard limit [m/s]
+  #     nominal: 2.0 # target speed [m/s]
+  #     accel_limit: 1.0 # m/s²
+  #     decel_limit: 1.0 # m/s²
+  #   safety:
+  #     clearance: 0.3 # Safety distance from other carriers [meters]
+  #   tags:
+  #     surface: ""
+  #     test_edge: ""
+  #     role: ""
+  - id: "P034 --- P035"
+    startNodeId: "P034"
+    endNodeId: "P035"
+    direction: "left"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [     0.850,      3.190,      1.545]
+        - [     0.849,      3.370,      1.561]
+        - [     0.850,      3.909,      1.403]
+        - [     0.850,      3.990,      1.369]
+        - [     0.850,      4.524,      1.183]
+        - [     0.850,      5.515,      0.817]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.333, 0.667, 1.000, 1.000,
+              1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 2.446
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: "ramp"
+      test_edge: ""
+      role: "ramp_down"
+  - id: "P035 --- P036"
+    startNodeId: "P035"
+    endNodeId: "P036"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [     0.850,      5.515,      0.817]
+        - [     0.850,      7.082,      0.250]
+        - [     0.850,      6.828,      0.344]
+        - [     0.850,      7.746,      0.012]
+        - [     0.850,      7.608,      0.076]
+        - [     0.850,      8.225,      0.000]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.333, 0.667, 1.000, 1.000,
+              1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 2.844
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: "ramp"
+      test_edge: ""
+      role: "ramp_down"
+  - id: "P031 --- P037"
+    startNodeId: "P031"
+    endNodeId: "P037"
+    direction: "right"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [     5.062,      1.390,      1.545]
+        - [     4.817,      1.459,      1.545]
+        - [     4.533,      1.577,      1.545]
+        - [     4.234,      1.828,      1.545]
+        - [     4.057,      2.043,      1.545]
+        - [     3.872,      2.378,      1.545]
+        - [     3.806,      2.677,      1.545]
+        - [     3.805,      2.890,      1.545]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.200, 0.400, 0.600, 0.800,
+              1.000, 1.000, 1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 2.118
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P037 --- P038"
+    startNodeId: "P037"
+    endNodeId: "P038"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [     3.805,      2.890,      1.545]
+        - [     3.807,      3.283,      1.531]
+        - [     3.804,      3.159,      1.552]
+        - [     3.805,      3.401,      1.523]
+        - [     3.805,      3.530,      1.501]
+        - [     3.805,      3.791,      1.443]
+        - [     3.806,      3.941,      1.393]
+        - [     3.805,      4.335,      1.247]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.200, 0.400, 0.600, 0.800,
+              1.000, 1.000, 1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 1.489
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P039 --- P035"
+    startNodeId: "P039"
+    endNodeId: "P035"
+    direction: "right"
+    directionality: "forward_only"
+    geometry:
+      type: "spline"
+      representation: "nurbs"
+      frame: "map"
+      control_points:
+        - [     2.350,      4.335,      1.247]
+        - [     2.057,      4.338,      1.245]
+        - [     1.653,      4.456,      1.203]
+        - [     1.132,      4.859,      1.056]
+        - [     0.937,      5.211,      0.928]
+        - [     0.850,      5.515,      0.817]
+      degree: 3
+      knots: [0.000, 0.000, 0.000, 0.000, 0.333, 0.667, 1.000, 1.000,
+              1.000, 1.000]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      length_estimate: 2.115
+      length_computed: true
+      parameterization: "centripetal"
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  #lines:
+  - id: "P033 --- P024"
+    startNodeId: "P033"
+    endNodeId: "P024"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [5.301, 9.463, 0.000]
+        - [8.330, 9.463, 0.000]
+      length: 3.029
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P024 --- P026"
+    startNodeId: "P024"
+    endNodeId: "P026"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [8.330, 9.463, 0.000]
+        - [10.323, 9.463, 0.000]
+      length: 1.993
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P026 --- P027"
+    startNodeId: "P026"
+    endNodeId: "P027"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [10.323, 9.463, 0.000]
+        - [12.582, 9.463, 0.000]
+      length: 2.259
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P027 --- P022"
+    startNodeId: "P027"
+    endNodeId: "P022"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [12.582, 9.463, 0.000]
+        - [17.350, 9.463, 0.000]
+      length: 4.768
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P025 --- P012"
+    startNodeId: "P025"
+    endNodeId: "P012"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [5.216, 8.005, 0.000]
+        - [17.350, 8.005, 0.000]
+      length: 12.134
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P007 --- P008"
+    startNodeId: "P007"
+    endNodeId: "P008"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [5.352, 6.278, 0.000]
+        - [7.107, 6.277, 0.000]
+      length: 1.755
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P008 --- P009"
+    startNodeId: "P008"
+    endNodeId: "P009"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [7.107, 6.277, 0.000]
+        - [7.877, 6.277, 0.000]
+      length: 0.770
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: "toploader_line"
+  - id: "P009 --- P010"
+    startNodeId: "P009"
+    endNodeId: "P010"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [7.877, 6.277, 0.000]
+        - [14.472, 6.277, 0.000]
+      length: 6.595
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: "toploader_line"
+  - id: "P010 --- P011"
+    startNodeId: "P010"
+    endNodeId: "P011"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [14.472, 6.277, 0.000]
+        - [17.350, 6.277, 0.000]
+      length: 2.878
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: "toploader_line"
+  - id: "P003 --- P004"
+    startNodeId: "P003"
+    endNodeId: "P004"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [3.823, 9.249, 0.000]
+        - [3.850, 8.966, 0.000]
+      length: 0.284
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P004 --- P005"
+    startNodeId: "P004"
+    endNodeId: "P005"
+    direction: "right"
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [3.850, 8.966, 0.000]
+        - [3.850, 8.095, 0.000]
+      length: 0.871
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P005 --- P006"
+    startNodeId: "P005"
+    endNodeId: "P006"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [3.850, 8.095, 0.000]
+        - [3.850, 7.534, 0.000]
+      length: 0.561
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P021 --- P013"
+    startNodeId: "P021"
+    endNodeId: "P013"
+    direction: "left"
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [18.850, 6.750, 0.000]
+        - [18.850, 5.021, 0.000]
+      length: 1.729
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P013 --- P014"
+    startNodeId: "P013"
+    endNodeId: "P014"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [18.850, 5.021, 0.000]
+        - [18.850, 4.534, 0.000]
+      length: 0.487
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P014 --- P019"
+    startNodeId: "P014"
+    endNodeId: "P019"
+    direction: "left"
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [18.850, 4.534, 0.000]
+        - [18.850, 2.890, 0.000]
+      length: 1.644
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P017 --- P028"
+    startNodeId: "P017"
+    endNodeId: "P028"
+    direction: "left"
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [17.350, 1.390, 0.000]
+        - [14.529, 1.390, 0.000]
+      length: 2.821
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P028 --- P029"
+    startNodeId: "P028"
+    endNodeId: "P029"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [14.529, 1.390, 0.000]
+        - [11.436, 1.390, 0.000]
+      length: 3.093
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+  - id: "P030 --- P031"
+    startNodeId: "P030"
+    endNodeId: "P031"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [6.399, 1.390, 1.545]
+        - [5.062, 1.390, 1.545]
+      length: 1.337
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: "platform"
+      test_edge: ""
+      role: ""
+  - id: "P031 --- P032"
+    startNodeId: "P031"
+    endNodeId: "P032"
+    direction: "left"
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [5.062, 1.390, 1.545]
+        - [2.350, 1.390, 1.545]
+      length: 2.712
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: "platform"
+      test_edge: ""
+      role: ""
+  - id: "P036 --- P001"
+    startNodeId: "P036"
+    endNodeId: "P001"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [0.850, 8.225, 0.000]
+        - [0.850, 8.965, 0.000]
+      length: 0.740
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""  
+  - id: "P038 --- P039"
+    startNodeId: "P038"
+    endNodeId: "P039"
+    direction: ""
+    directionality: "forward_only"
+    geometry:
+      type: "line"
+      points:
+        - [3.805, 4.335, 1.247]
+        - [2.350, 4.335, 1.247]
+      length: 1.455
+      length_computed: true
+    speed_profile:
+      max: 2.5 # Hard limit [m/s]
+      nominal: 2.0 # target speed [m/s]
+      accel_limit: 1.0 # m/s²
+      decel_limit: 1.0 # m/s²
+    safety:
+      clearance: 0.3 # Safety distance from other carriers [meters]
+    tags:
+      surface: ""
+      test_edge: ""
+      role: ""
+# ============================================================================
+# FIDUCIALS DOCUMENTATION
+# ============================================================================
+# FIDUCIALS: (array of objects) Physical markers for localization
+# Each fiducial contains:
+#   id: (string) Unique identifier
+#   type: (string) Marker technology: "magnetic_marker" | "apriltag" | "qr" | etc.
+#   pose: (object) Physical location and orientation
+#     position: (array) 3D coordinates [x, y, z]
+#     yaw: (number) Orientation in radians
+#   association: (object) Link to map topology
+#     edge_id: (string) Associated edge ID
+#     s: (number) Distance along edge from source node [meters]
+#     # OR alternatively:
+#     nearest_node: (string) Associated node ID
+#   tags: (object) Fiducial-specific metadata
+#
+# Common Fiducial Tags:
+#   role: "localization" | "charger_marker" - Purpose/function
+#
+# NOTE: The 's' parameter represents arc-length distance (in meters) from
+# the source node of the associated edge to the fiducial's location.
+# ============================================================================
+fiducials:
+  # Charging line
+  - id: "pm1"
+    type: "magnetic_marker"
+    pose: { position: [6.4945, 9.500, 0.0], yaw: 0.0 }
+    association:
+      edge_id: "P033 --- P024"
+      s: 2.5 # Not correct!
+    tags: { role: "localization", phys_id: "12" }
+  - id: "pm2"
+    type: "magnetic_marker"
+    pose: { position: [8.4945, 9.500, 0.0], yaw: 0.0 }
+    association:
+      edge_id: "P024 --- P026"
+      s: 4.0 # Not correct!
+    tags: { role: "charger_marker", phys_id: "5"  }
+  - id: "pm3"
+    type: "magnetic_marker"
+    pose: { position: [10.4945, 9.500, 0.0], yaw: 0.0 }
+    association:
+      edge_id: "P026 --- P027"
+      s: 4.0 # Not correct!
+    tags: { role: "charger_marker", phys_id: "5"   }
+  - id: "pm4"
+    type: "magnetic_marker"
+    pose: { position: [12.6745, 9.500, 0.0], yaw: 0.0 }
+    association:
+      edge_id: "P027 --- P022"
+      s: 4.0 # Not correct!
+    tags: { role: "charger_marker", phys_id: "5"   }
+  - id: "pm5"
+    type: "magnetic_marker"
+    pose: { position: [14.6745, 9.500, 0.0], yaw: 0.0 }
+    association:
+      edge_id: "P027 --- P022"
+      s: 4.0 # Not correct!
+    tags: { role: "localization", phys_id: "18"   }
+  # Pickup lane
+  - id: "pm6"
+    type: "magnetic_marker"
+    pose: { position: [9.322, 6.240, 0.0], yaw: 0.0 }
+    association:
+      edge_id: "P009 --- P010"
+      s: 4.0 # Not correct!
+    tags: { role: "localization" , phys_id: "5"  }
+  - id: "pm7"
+    type: "magnetic_marker"
+    pose: { position: [10.722, 6.240, 0.0], yaw: 0.0 }
+    association:
+      edge_id: "P009 --- P010"
+      s: 4.0 # Not correct!
+    tags: { role: "localization", phys_id: "5"   }
+  - id: "pm8"
+    type: "magnetic_marker"
+    pose: { position: [12.335, 6.240, 0.0], yaw: 0.0 }
+    association:
+      edge_id: "P009 --- P010"
+      s: 4.0 # Not correct!
+    tags: { role: "localization", phys_id: "5"   }
+  - id: "pm9"
+    type: "magnetic_marker"
+    pose: { position: [13.835, 6.240, 0.0], yaw: 0.0 }
+    association:
+      edge_id: "P009 --- P010"
+      s: 4.0 # Not correct!
+    tags: { role: "localization", phys_id: "5"   }
+  # Top line
+  - id: "pm10"
+    type: "magnetic_marker"
+    pose: { position: [12.500, 1.390, 0.0], yaw: 3.14159265359}
+    association:
+      edge_id: "P028 --- P029"
+      s: 4.0 # Not correct!
+    tags: { role: "localization", phys_id: "15"   }
+
+# ============================================================================
+# ZONES & LAYERS DOCUMENTATION
+# ============================================================================
+# ZONES: (array) Reserved for future use - geometric regions
+#   Examples: keep-out areas, docking zones, charging areas, safety polygons
+#
+# LAYERS: (array) Reserved for future use - auxiliary data references
+#   Examples: occupancy grids, costmaps, elevation maps, semantic overlays
+# ============================================================================
+
+zones: []
+layers: []
