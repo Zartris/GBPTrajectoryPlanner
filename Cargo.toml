@@ -1,4 +1,15 @@
 [workspace]
 resolver = "2"
-# Desktop crates (simulator, bridge, visualiser, etc.) will be added here.
-# The ESP32 firmware lives in its own workspace at firmware/
+members = [
+    "crates/gbp-map",
+    "crates/gbp-core",
+    "crates/gbp-comms",
+    "crates/gbp-agent",
+]
+
+[workspace.dependencies]
+heapless   = { version = "0.8", default-features = false }
+postcard   = { version = "1",   default-features = false }
+libm       = { version = "0.2", default-features = false }
+serde      = { version = "1",   features = ["derive"] }
+serde_yaml = { version = "0.9" }
