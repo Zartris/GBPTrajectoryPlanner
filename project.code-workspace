@@ -1,0 +1,12 @@
+{
+    "folders": [
+        {
+            "path": ".",
+            "name": "workspace"
+        },
+        {
+            "path": "firmware",
+            "name": "firmware"
+        }
+    ]
+}

@@ -2,7 +2,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-FIRMWARE_DIR="$SCRIPT_DIR/../firmware"
+FIRMWARE_DIR="$SCRIPT_DIR/.."
 BINARY="$FIRMWARE_DIR/target/riscv32imac-unknown-none-elf/release/esp32c5_rust_template"
 
 mapfile -t PROBES < <(probe-rs list 2>/dev/null | grep -oP '(?<=-- )[^\s]+(?= )' || true)

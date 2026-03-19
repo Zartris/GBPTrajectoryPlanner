@@ -1,0 +1,4 @@
+[workspace]
+resolver = "2"
+# Desktop crates (simulator, bridge, visualiser, etc.) will be added here.
+# The ESP32 firmware lives in its own workspace at firmware/

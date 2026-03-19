@@ -1,0 +1,39 @@
+{
+    "rust-analyzer.cargo.target": "riscv32imac-unknown-none-elf",
+    "rust-analyzer.cargo.allTargets": false,
+    "rust-analyzer.cargo.buildScripts.overrideCommand": [
+        "cargo",
+        "build",
+        "--target",
+        "riscv32imac-unknown-none-elf",
+        "-Zbuild-std=alloc,core",
+        "--message-format=json"
+    ],
+    "rust-analyzer.check.overrideCommand": [
+        "cargo",
+        "clippy",
+        "--target",
+        "riscv32imac-unknown-none-elf",
+        "-Zbuild-std=alloc,core",
+        "--message-format=json"
+    ],
+    "VsCodeTaskButtons.showCounter": false,
+    "VsCodeTaskButtons.tasks": [
+        {
+            "task": "build",
+            "tooltip": "Build firmware (release)"
+        },
+        {
+            "task": "flash-to-device",
+            "tooltip": "Flash to a selected device"
+        },
+        {
+            "task": "monitor",
+            "tooltip": "Attach monitor to a selected device"
+        },
+        {
+            "task": "flash-all",
+            "tooltip": "Flash to all connected devices"
+        }
+    ]
+}

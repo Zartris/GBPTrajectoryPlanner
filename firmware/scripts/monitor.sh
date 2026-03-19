@@ -2,7 +2,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-FIRMWARE_DIR="$SCRIPT_DIR/../firmware"
+FIRMWARE_DIR="$SCRIPT_DIR/.."
 
 mapfile -t PORTS < <(ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null)
 
