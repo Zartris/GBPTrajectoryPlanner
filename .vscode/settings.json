@@ -1,0 +1,21 @@
+{
+    "VsCodeTaskButtons.showCounter": false,
+    "VsCodeTaskButtons.tasks": [
+        {
+            "task": "build",
+            "tooltip": "Build the project"
+        },
+        {
+            "task": "flash-to-device",
+            "tooltip": "Flash to a selected device"
+        },
+        {
+            "task": "monitor",
+            "tooltip": "Attach monitor to a selected device"
+        },
+        {
+            "task": "flash-all",
+            "tooltip": "Flash to all connected devices"
+        }
+    ],
+}

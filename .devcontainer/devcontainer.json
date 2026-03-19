@@ -1,0 +1,57 @@
+{
+    "name": "Valhalla",
+    // Comment the image and use the build property to build the image from the
+    // Dockerfile instead of downloading it from https://hub.docker.com/r/espressif/rust-nostd-training
+    // "image": "docker.io/espressif/rust-nostd-training",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            "RUST_CHANNEL": "stable"
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "editor.formatOnPaste": true,
+                "editor.formatOnSave": true,
+                "editor.formatOnSaveMode": "file",
+                "editor.formatOnType": true,
+                "lldb.executable": "/usr/bin/lldb",
+                "files.watcherExclude": {
+                    "**/target/**": true
+                },
+                "rust-analyzer.checkOnSave.command": "clippy",
+                "[rust]": {
+                    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+                },
+                "[toml]": {
+                    "editor.defaultFormatter": "tamasfe.even-better-toml"
+                }
+            },
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "tamasfe.even-better-toml",
+                "vadimcn.vscode-lldb",
+                "mutantdino.resourcemonitor",
+                "yzhang.markdown-all-in-one",
+                "fill-labs.dependi",
+                "probe-rs.probe-rs-debugger",
+                "spencerwmiles.vscode-task-buttons",
+                "mhutchie.git-graph",
+                "bierner.markdown-mermaid"
+            ]
+        }
+    },
+    "remoteUser": "esp",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "workspaceFolder": "/workspace",
+    "privileged": true,
+    "mounts": [
+        "source=/dev,target=/dev,type=bind,consistency=cached",
+        "source=/run/udev,target=/run/udev,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.ssh,target=/home/esp/.ssh,type=bind,readonly",
+        "source=${localEnv:HOME}/.claude,target=/home/esp/.claude,type=bind",
+        "source=${localEnv:HOME}/.claude.json,target=/home/esp/.claude.json,type=bind",
+        "source=${localEnv:HOME}/.copilot,target=/home/esp/.copilot,type=bind"
+    ]
+}
