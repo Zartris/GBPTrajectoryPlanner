@@ -36,3 +36,29 @@ fn astar_no_path_returns_none() {
     m.add_node(Node { id: NodeId(1), position: [1.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
     assert!(astar(&m, NodeId(0), NodeId(1)).is_none());
 }
+
+#[test]
+fn astar_with_non_sequential_node_ids() {
+    // NodeIds that do NOT match their Vec position
+    let mut map = Map::new("test");
+    map.add_node(Node { id: NodeId(10), position: [0.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+    map.add_node(Node { id: NodeId(20), position: [1.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+    map.add_node(Node { id: NodeId(30), position: [2.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+    map.add_edge(Edge {
+        id: EdgeId(0), start: NodeId(10), end: NodeId(20),
+        geometry: EdgeGeometry::Line { start: [0.0,0.0,0.0], end: [1.0,0.0,0.0], length: 1.0 },
+        speed: SpeedProfile { max: 1.0, nominal: 1.0, accel_limit: 1.0, decel_limit: 1.0 },
+        safety: SafetyProfile { clearance: 0.1 },
+    }).unwrap();
+    map.add_edge(Edge {
+        id: EdgeId(1), start: NodeId(20), end: NodeId(30),
+        geometry: EdgeGeometry::Line { start: [1.0,0.0,0.0], end: [2.0,0.0,0.0], length: 1.0 },
+        speed: SpeedProfile { max: 1.0, nominal: 1.0, accel_limit: 1.0, decel_limit: 1.0 },
+        safety: SafetyProfile { clearance: 0.1 },
+    }).unwrap();
+    map.rebuild_outgoing();
+    let path = astar(&map, NodeId(10), NodeId(30)).expect("path should exist");
+    assert_eq!(path.len(), 2);
+    assert_eq!(path[0], EdgeId(0));
+    assert_eq!(path[1], EdgeId(1));
+}

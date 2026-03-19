@@ -53,8 +53,8 @@ fn map_stores_nodes_and_edges() {
     assert_eq!(map.nodes.len(), 2);
     assert_eq!(map.edges.len(), 1);
     assert_eq!(map.outgoing[n0.0 as usize].len(), 1);
-    assert_eq!(map.eval_position(e, 0.0), [0.0, 0.0, 0.0]);
-    assert_eq!(map.eval_position(e, 1.0), [1.0, 0.0, 0.0]);
+    assert_eq!(map.eval_position(e, 0.0), Some([0.0, 0.0, 0.0]));
+    assert_eq!(map.eval_position(e, 1.0), Some([1.0, 0.0, 0.0]));
 }
 
 #[test]
