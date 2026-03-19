@@ -57,7 +57,10 @@ pub struct NurbsGeometry {
     pub knots:          Vec<f32, MAX_KNOTS>,
     pub degree:         u8,
     pub length:         f32,
+    /// Arc-length table: rebuilt from control_points/knots after deserialization.
+    #[cfg_attr(feature = "serde", serde(skip, default = "default_arc_table"))]
     pub arc_t: [f32; ARC_TABLE_SAMPLES],
+    #[cfg_attr(feature = "serde", serde(skip, default = "default_arc_table"))]
     pub arc_s: [f32; ARC_TABLE_SAMPLES],
 }
 
@@ -93,7 +96,20 @@ pub struct Map {
     pub map_id:  heapless::String<32>,
     pub nodes:   Vec<Node, MAX_NODES>,
     pub edges:   Vec<Edge, MAX_EDGES>,
+    /// Adjacency list: outgoing[NodeId.0] = list of edge indices.
+    /// Skipped during serialization; rebuilt via `rebuild_outgoing()`.
+    #[cfg_attr(feature = "serde", serde(skip, default = "default_outgoing"))]
     pub outgoing: [Vec<u16, 8>; MAX_NODES],
+}
+
+#[cfg(feature = "serde")]
+fn default_arc_table() -> [f32; ARC_TABLE_SAMPLES] {
+    [0.0f32; ARC_TABLE_SAMPLES]
+}
+
+#[cfg(feature = "serde")]
+fn default_outgoing() -> [Vec<u16, 8>; MAX_NODES] {
+    core::array::from_fn(|_| Vec::new())
 }
 
 impl Map {
@@ -105,6 +121,19 @@ impl Map {
             nodes: Vec::new(),
             edges: Vec::new(),
             outgoing: core::array::from_fn(|_| Vec::new()),
+        }
+    }
+
+    /// Rebuild the outgoing adjacency list from edges. Call after deserialization.
+    pub fn rebuild_outgoing(&mut self) {
+        for slot in self.outgoing.iter_mut() {
+            slot.clear();
+        }
+        for (idx, edge) in self.edges.iter().enumerate() {
+            let start_slot = edge.start.0 as usize;
+            if start_slot < MAX_NODES {
+                let _ = self.outgoing[start_slot].push(idx as u16);
+            }
         }
     }
 

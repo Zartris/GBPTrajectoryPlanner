@@ -2,6 +2,30 @@ use gbp_map::map::*;
 use gbp_map::{MAX_EDGES, MAX_NODES};
 
 #[test]
+#[cfg(feature = "serde")]
+fn postcard_round_trip() {
+    let mut map = Map::new("rt");
+    let n0 = map.add_node(Node { id: NodeId(0), position: [0.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+    let n1 = map.add_node(Node { id: NodeId(1), position: [1.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+    map.add_edge(Edge {
+        id: EdgeId(0), start: n0, end: n1,
+        geometry: EdgeGeometry::Line { start:[0.0,0.0,0.0], end:[1.0,0.0,0.0], length:1.0 },
+        speed: SpeedProfile { max:2.5, nominal:2.0, accel_limit:1.0, decel_limit:1.0 },
+        safety: SafetyProfile { clearance: 0.3 },
+    }).unwrap();
+
+    let mut buf = [0u8; 4096];
+    let serialized = postcard::to_slice(&map, &mut buf).expect("serialization failed");
+    let mut map2: Map = postcard::from_bytes(serialized).expect("deserialization failed");
+    map2.rebuild_outgoing();
+
+    assert_eq!(map2.nodes.len(), map.nodes.len());
+    assert_eq!(map2.edges.len(), map.edges.len());
+    assert_eq!(map2.nodes[0].id.0, map.nodes[0].id.0);
+    assert_eq!(map2.edges[0].geometry.length(), map.edges[0].geometry.length());
+}
+
+#[test]
 fn map_stores_nodes_and_edges() {
     let mut map = Map::new("test");
     let n0 = map.add_node(Node {
