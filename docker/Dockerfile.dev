@@ -44,8 +44,15 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libxrandr-dev \
         libxinerama-dev \
         libgl1-mesa-dev \
+        libgl1-mesa-dri \
         libegl1-mesa-dev \
+        libegl-mesa0 \
         libgles2-mesa-dev \
+        libgles2-mesa \
+        mesa-utils \
+        mesa-vulkan-drivers \
+        libvulkan1 \
+        vulkan-tools \
         libxkbcommon-dev \
         libxkbcommon-x11-0 \
         libwayland-dev
@@ -72,7 +79,7 @@ RUN git lfs install --system
 # ── 6. Create non-root user with dialout/plugdev access ───────────
 RUN adduser --disabled-password --gecos "" ${CONTAINER_USER} \
     && (groupadd -g 46 plugdev 2>/dev/null || true) \
-    && usermod -aG dialout,plugdev ${CONTAINER_USER} \
+    && usermod -aG dialout,plugdev,video,render ${CONTAINER_USER} \
     && echo "${CONTAINER_USER} ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers
 
 # ── 7. Config files ───────────────────────────────────────────────
