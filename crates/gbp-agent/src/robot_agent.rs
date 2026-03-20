@@ -107,10 +107,58 @@ impl<C: CommsInterface> RobotAgent<C> {
         means
     }
 
-    /// Current belief variances for all K variables.
+    /// Cavity belief means — marginal minus IR factor messages.
+    /// This is what should be broadcast so neighbours don't double-count evidence.
+    pub fn cavity_belief_means(&self) -> [f32; MAX_HORIZON] {
+        let mut means = [0.0f32; MAX_HORIZON];
+        for (i, v) in self.graph.variables.iter().enumerate() {
+            // Start with marginal
+            let mut cav_eta = v.eta;
+            let mut cav_lambda = v.lambda;
+            // Subtract IR factor messages on this variable
+            for &(_, k, fidx) in self.ir_set.iter() {
+                if k == i {
+                    if let Some(fnode) = self.graph.factor_node(fidx) {
+                        cav_eta -= fnode.msg_eta[0];
+                        cav_lambda -= fnode.msg_lambda[0];
+                    }
+                }
+            }
+            // Cavity mean = cav_eta / cav_lambda
+            if cav_lambda > 1e-10 {
+                means[i] = cav_eta / cav_lambda;
+            } else {
+                means[i] = v.mean(); // fallback to marginal
+            }
+        }
+        means
+    }
+
+    /// Cavity belief variances — marginal minus IR factor messages.
+    pub fn cavity_belief_vars(&self) -> [f32; MAX_HORIZON] {
+        let mut vars = [0.0f32; MAX_HORIZON];
+        for (i, v) in self.graph.variables.iter().enumerate() {
+            let mut cav_lambda = v.lambda;
+            for &(_, k, fidx) in self.ir_set.iter() {
+                if k == i {
+                    if let Some(fnode) = self.graph.factor_node(fidx) {
+                        cav_lambda -= fnode.msg_lambda[0];
+                    }
+                }
+            }
+            if cav_lambda > 1e-10 {
+                vars[i] = (1.0 / cav_lambda).min(1e6);
+            } else {
+                vars[i] = v.variance().min(1e6);
+            }
+        }
+        vars
+    }
+
     pub fn last_max_position(&self) -> f32 { self.last_max_position }
     pub fn set_pos_3d(&mut self, pos: [f32; 3]) { self.pos_3d = pos; }
 
+    /// Current belief variances (marginal, for visualiser).
     pub fn belief_vars(&self) -> [f32; MAX_HORIZON] {
         let mut vars = [0.0f32; MAX_HORIZON];
         for (i, v) in self.graph.variables.iter().enumerate() {
@@ -129,11 +177,11 @@ impl<C: CommsInterface> RobotAgent<C> {
         // Note: pos_3d is set by AgentRunner from the outside (it knows local_s).
         // The agent only uses pos_3d for safety cap distance calculations.
 
-        // 0. Anchor variable[0] at observed position (strong prior)
+        // 0. Anchor variable[0] at observed position (strong prior).
+        // Only set the prior — iterate()'s variable_to_factor_pass will reset eta/lambda
+        // from prior and re-accumulate factor messages. Setting eta/lambda here is redundant.
         self.graph.variables[0].prior_eta = self.position_s * 1000.0;
         self.graph.variables[0].prior_lambda = 1000.0;
-        self.graph.variables[0].eta = self.graph.variables[0].prior_eta;
-        self.graph.variables[0].lambda = self.graph.variables[0].prior_lambda;
 
         // 1. Receive broadcasts from neighbours. If none arrived this tick,
         // use the cached version so IR factors don't flicker on/off.
@@ -183,21 +231,6 @@ impl<C: CommsInterface> RobotAgent<C> {
         StepOutput { velocity, position_s: self.position_s, current_edge: self.current_edge }
     }
 
-    /// Find the distance to the nearest robot AHEAD of us on the trajectory.
-    /// Returns f32::MAX if no robot is ahead.
-    fn nearest_ahead_distance(&self, broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>) -> f32 {
-        let mut min_ahead = f32::MAX;
-        for bcast in broadcasts.iter() {
-            if bcast.robot_id == self.robot_id { continue; }
-            let gap = bcast.position_s - self.position_s; // positive = ahead
-            if gap > -D_SAFE && gap < min_ahead {
-                // Include robots slightly behind us too (within d_safe) to prevent
-                // position overshoot from one-tick lag
-                min_ahead = gap;
-            }
-        }
-        min_ahead
-    }
 
     /// Minimum 3D distance to any neighbour robot sharing planned edges.
     /// Returns f32::MAX if no neighbours are close.
@@ -274,7 +307,26 @@ impl<C: CommsInterface> RobotAgent<C> {
                     .and_then(|t| t.edge_and_local_s(my_s_k))
                     .and_then(|(eid, ls, _)| map.eval_position(eid, ls))
                     .unwrap_or(self.pos_3d);
-                let their_pos = bcast.pos; // neighbour's 3D from broadcast (current pos, not per-k)
+
+                // Convert B's predicted position at timestep k to 3D using B's planned edges
+                let their_pos = {
+                    let mut cumulative = 0.0f32;
+                    let mut found = bcast.pos; // fallback to B's current position
+                    for &eid in bcast.planned_edges.iter() {
+                        if let Some(idx) = map.edge_index(eid) {
+                            let len = map.edges[idx].geometry.length();
+                            if their_s_k < cumulative + len {
+                                let local = their_s_k - cumulative;
+                                if let Some(p) = map.eval_position(eid, local) {
+                                    found = p;
+                                }
+                                break;
+                            }
+                            cumulative += len;
+                        }
+                    }
+                    found
+                };
 
                 let dx = my_pos[0] - their_pos[0];
                 let dy = my_pos[1] - their_pos[1];
@@ -364,11 +416,16 @@ impl<C: CommsInterface> RobotAgent<C> {
     }
 
     fn make_broadcast(&self, velocity: f32) -> RobotBroadcast {
+        // Broadcast CAVITY beliefs (marginal minus IR factor messages).
+        // This prevents circular evidence — when robot B receives our cavity,
+        // it gets our belief WITHOUT the information B already sent us.
+        let cavity_means = self.cavity_belief_means();
+        let cavity_vars = self.cavity_belief_vars();
         let mut means: Vec<f32, MAX_HORIZON> = Vec::new();
         let mut vars: Vec<f32, MAX_HORIZON> = Vec::new();
-        for v in &self.graph.variables {
-            let _ = means.push(v.mean());
-            let _ = vars.push(v.variance().min(1e6));
+        for i in 0..MAX_HORIZON {
+            let _ = means.push(cavity_means[i]);
+            let _ = vars.push(cavity_vars[i]);
         }
         RobotBroadcast {
             robot_id: self.robot_id,

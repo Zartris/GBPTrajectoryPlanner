@@ -57,7 +57,9 @@ impl FactorKind {
 }
 
 /// Internal wrapper used by FactorGraph to store a factor alongside its outgoing messages.
-pub(crate) struct FactorNode {
+/// Stores a factor alongside its outgoing messages.
+/// Public so downstream crates can read stored messages (e.g. for cavity belief computation).
+pub struct FactorNode {
     pub kind: FactorKind,
     /// Outgoing messages (factor -> variable), indexed by position in variable_indices().
     /// All factors in this system are pairwise or unary -- max 2.

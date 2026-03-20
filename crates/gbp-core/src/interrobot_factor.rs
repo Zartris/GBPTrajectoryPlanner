@@ -1,7 +1,18 @@
-//! Inter-robot collision avoidance factor.
+//! Inter-robot collision avoidance factor (one-sided hinge).
 //!
 //! Connects only var_idx_a (in this robot's graph).
 //! Robot B's belief is injected externally as (ext_eta_b, ext_lambda_b).
+//!
+//! Uses a one-sided penalty: only active when `dist < d_safe` (collision zone).
+//! When `dist >= d_safe`, the factor sends zero messages (constraint satisfied).
+//! This prevents the factor from pulling robots together when safely separated.
+//!
+//! NOTE on `linearize()` return values: Because this is a unary factor (after Schur
+//! complement marginalization over robot B), `linearize()` returns the pre-computed
+//! information-form message (msg_eta, msg_lambda) in the `residual` and `precision`
+//! fields of `LinearizedFactor`. These are NOT a raw residual and precision — they
+//! are the final factor-to-variable message. The `jacobian` field is unused for
+//! unary factors in `factor_graph.rs`.
 
 use heapless::Vec;
 use crate::factor_node::{Factor, LinearizedFactor};
@@ -45,7 +56,17 @@ impl Factor for InterRobotFactor {
     fn is_active(&self) -> bool { self.active }
 
     fn linearize(&self, _variables: &[VariableNode]) -> LinearizedFactor {
-        let residual = self.d_safe - self.dist;
+        // One-sided hinge: only penalize when dist < d_safe (collision zone).
+        // When dist >= d_safe, the constraint is satisfied — send zero message.
+        let violation = self.d_safe - self.dist; // positive = too close
+        if violation <= 0.0 {
+            // Constraint satisfied — no message
+            let mut jacobian: Vec<f32, 2> = Vec::new();
+            let _ = jacobian.push(0.0);
+            return LinearizedFactor { jacobian, residual: 0.0, precision: 0.0 };
+        }
+
+        let residual = violation;
         let sigma_r = f32::max(self.sigma_r, 1e-6);
         let prec = 1.0 / (sigma_r * sigma_r);
 

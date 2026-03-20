@@ -171,7 +171,8 @@ async fn main() {
     // reactive safety cap can't fully prevent due to dynamics taper dominance.
     const D_SAFE: f32 = 0.3;
     let r1_total = if goal0 == goal1 {
-        (total_length1 - D_SAFE).max(0.1) // stop d_safe before goal
+        // Use 1.5x d_safe margin to account for arc-length→3D distance mismatch on curved edges
+        (total_length1 - D_SAFE * 1.5).max(0.1)
     } else {
         total_length1
     };

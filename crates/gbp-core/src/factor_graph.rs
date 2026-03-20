@@ -1,6 +1,19 @@
+//! GBP factor graph with damped message passing.
+//!
+//! NOTE: The variable-to-factor pass resets variables to priors and re-accumulates
+//! all factor messages. This is NOT standard GBP cavity computation — it's a
+//! "full marginal" approach equivalent to mean-field updates. For tree-structured
+//! graphs this converges identically; for loopy graphs (multiple IR factors active),
+//! damping (alpha < 1.0) is applied to factor-to-variable messages to stabilize
+//! convergence.
+
 use heapless::Vec;
 use crate::factor_node::{Factor, FactorKind, FactorNode};
 use crate::variable_node::VariableNode;
+
+/// Damping factor for message updates. 1.0 = no damping, 0.5 = average old/new.
+/// Lower values improve convergence stability in loopy graphs at the cost of speed.
+const MSG_DAMPING: f32 = 0.5;
 
 /// GBP factor graph with const-generic capacity.
 /// K = number of variables (timestep horizon), F = max factors.
@@ -38,12 +51,17 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
         self.factors.get(idx).map(|f| &f.kind)
     }
 
+    /// Get immutable access to the raw FactorNode (for reading stored messages).
+    pub fn factor_node(&self, idx: usize) -> Option<&FactorNode> {
+        self.factors.get(idx)
+    }
+
     /// Get mutable access to a factor's FactorKind (for setting v_nom, Jacobians, etc.)
     pub fn get_factor_kind_mut(&mut self, idx: usize) -> Option<&mut FactorKind> {
         self.factors.get_mut(idx).map(|f| &mut f.kind)
     }
 
-    /// Run N iterations of GBP message passing.
+    /// Run N iterations of damped GBP message passing.
     pub fn iterate(&mut self, iterations: usize) {
         for _ in 0..iterations {
             self.factor_to_variable_pass();
@@ -60,11 +78,15 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
             let var_indices = f.kind.as_factor().variable_indices();
 
             if var_indices.len() == 1 {
-                // Unary factor (e.g. InterRobotFactor with external B):
-                // linearize() returns pre-computed (eta_msg, lambda_msg) in (residual, precision)
+                // Unary factor (e.g. InterRobotFactor):
+                // linearize() returns pre-computed information-form message
+                // (msg_eta, msg_lambda) in the (residual, precision) fields.
                 let lf = f.kind.as_factor().linearize(&self.variables);
-                f.msg_eta[0]    = lf.residual;
-                f.msg_lambda[0] = lf.precision;
+                let new_eta = lf.residual;
+                let new_lambda = lf.precision;
+                // Apply damping
+                f.msg_eta[0]    = MSG_DAMPING * new_eta    + (1.0 - MSG_DAMPING) * f.msg_eta[0];
+                f.msg_lambda[0] = MSG_DAMPING * new_lambda + (1.0 - MSG_DAMPING) * f.msg_lambda[0];
 
             } else if var_indices.len() == 2 {
                 // Pairwise factor: Schur complement marginalization.
@@ -85,7 +107,6 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
                 let xi_01 = prec * j0 * j1;
 
                 // Factor information vector: eta_f = J^T * prec * (J*x - r)
-                // where r = h(x) - z, so (J*x - r) = z (the "measurement" / desired value)
                 let jx = j0 * x0 + j1 * x1;
                 let zeta_0 = prec * j0 * (jx - r);
                 let zeta_1 = prec * j1 * (jx - r);
@@ -99,26 +120,35 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
                 // Message to variable 0 (marginalize out variable 1)
                 let denom1 = xi_11 + lambda1_cav;
                 if denom1.abs() > 1e-12 {
-                    f.msg_lambda[0] = xi_00 - xi_01 * xi_01 / denom1;
-                    f.msg_eta[0]    = zeta_0 - xi_01 * (zeta_1 + eta1_cav) / denom1;
+                    let new_lambda0 = xi_00 - xi_01 * xi_01 / denom1;
+                    let new_eta0    = zeta_0 - xi_01 * (zeta_1 + eta1_cav) / denom1;
+                    f.msg_lambda[0] = MSG_DAMPING * new_lambda0 + (1.0 - MSG_DAMPING) * f.msg_lambda[0];
+                    f.msg_eta[0]    = MSG_DAMPING * new_eta0    + (1.0 - MSG_DAMPING) * f.msg_eta[0];
                 }
 
                 // Message to variable 1 (marginalize out variable 0)
                 let denom0 = xi_00 + lambda0_cav;
                 if denom0.abs() > 1e-12 {
-                    f.msg_lambda[1] = xi_11 - xi_01 * xi_01 / denom0;
-                    f.msg_eta[1]    = zeta_1 - xi_01 * (zeta_0 + eta0_cav) / denom0;
+                    let new_lambda1 = xi_11 - xi_01 * xi_01 / denom0;
+                    let new_eta1    = zeta_1 - xi_01 * (zeta_0 + eta0_cav) / denom0;
+                    f.msg_lambda[1] = MSG_DAMPING * new_lambda1 + (1.0 - MSG_DAMPING) * f.msg_lambda[1];
+                    f.msg_eta[1]    = MSG_DAMPING * new_eta1    + (1.0 - MSG_DAMPING) * f.msg_eta[1];
                 }
             }
         }
     }
 
     fn variable_to_factor_pass(&mut self) {
-        // Reset all variables to their prior
+        // Reset all variables to their prior, then accumulate all factor messages.
+        // NOTE: This is a "full marginal" approach — each variable's belief is
+        // prior + sum(all_factor_messages), not a per-factor cavity. For standard
+        // GBP, the variable-to-factor message would be marginal - factor_message
+        // (cavity). The pairwise F-to-V pass above correctly uses cavities, so
+        // convergence is maintained for tree-structured subgraphs. Message damping
+        // stabilises the loopy case.
         for v in self.variables.iter_mut() {
             v.reset_to_prior();
         }
-        // Accumulate all factor messages
         for f in self.factors.iter() {
             if !f.kind.as_factor().is_active() { continue; }
             for (i, &var_idx) in f.kind.as_factor().variable_indices().iter().enumerate() {
