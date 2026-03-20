@@ -1,6 +1,8 @@
 //! Spawns a background tokio thread that connects to the simulator WebSocket
 //! and writes received RobotStateMsg values into WsInbox.
 
+const WS_INBOX_CAP: usize = 64;
+
 use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
 use futures_util::StreamExt;
@@ -30,7 +32,7 @@ pub fn spawn_ws_client(
                                     match serde_json::from_str::<RobotStateMsg>(&json) {
                                         Ok(state) => {
                                             let mut q = inbox.lock().unwrap_or_else(|e| e.into_inner());
-                                            if q.len() >= 64 { q.pop_front(); }
+                                            if q.len() >= WS_INBOX_CAP { q.pop_front(); }
                                             q.push_back(state);
                                         }
                                         Err(e) => warn!("bad msg: {}", e),

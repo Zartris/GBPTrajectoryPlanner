@@ -2,6 +2,7 @@
 use bevy::prelude::*;
 use gbp_map::map::{Map, EdgeId};
 use crate::state::{MapRes, RobotStates, WsInbox};
+use tracing::warn;
 
 pub struct RobotRenderPlugin;
 
@@ -19,14 +20,24 @@ pub struct RobotArrow { pub robot_id: u32 }
 /// Compute 3D world position for a robot at arc-length s on an edge.
 /// Applies the map->Bevy coordinate transform (Bevy Y-up; map Z = height).
 pub fn robot_world_pos(map: &Map, edge_id: EdgeId, s: f32) -> [f32; 3] {
-    let p = map.eval_position(edge_id, s).unwrap_or([0.0, 0.0, 0.0]);
-    [p[0], p[2], -p[1]]
+    match map.eval_position(edge_id, s) {
+        Some(p) => [p[0], p[2], -p[1]],
+        None => {
+            warn!("robot_world_pos: eval_position returned None for edge {:?}", edge_id);
+            [0.0, 0.0, 0.0]
+        }
+    }
 }
 
 /// Compute world-space unit tangent for the robot's orientation.
 pub fn robot_tangent(map: &Map, edge_id: EdgeId, s: f32) -> [f32; 3] {
-    let t = map.eval_tangent(edge_id, s).unwrap_or([1.0, 0.0, 0.0]);
-    [t[0], t[2], -t[1]]
+    match map.eval_tangent(edge_id, s) {
+        Some(t) => [t[0], t[2], -t[1]],
+        None => {
+            warn!("robot_tangent: eval_tangent returned None for edge {:?}", edge_id);
+            [1.0, 0.0, 0.0]
+        }
+    }
 }
 
 fn spawn_robot_arrow(

@@ -55,9 +55,18 @@ async fn main() {
     let mut rx_state = tx_state.subscribe();
     tokio::spawn(async move {
         loop {
-            if let Ok(msg) = rx_state.recv().await {
-                if let Ok(json) = serde_json::to_string(&msg) {
-                    let _ = tx_json_relay.send(json);
+            match rx_state.recv().await {
+                Ok(msg) => {
+                    if let Ok(json) = serde_json::to_string(&msg) {
+                        let _ = tx_json_relay.send(json);
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("relay: skipped {} messages", n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    tracing::info!("relay: broadcast channel closed, shutting down");
+                    break;
                 }
             }
         }
