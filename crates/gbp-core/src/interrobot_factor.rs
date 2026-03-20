@@ -34,6 +34,10 @@ impl InterRobotFactor {
     }
 
     pub fn set_active(&mut self, active: bool) { self.active = active; }
+
+    /// Update which variable this factor constrains (e.g. the timestep
+    /// where this robot is predicted to be closest to the neighbour).
+    pub fn set_variable_index(&mut self, idx: usize) { self.var_idx_a = idx; }
 }
 
 impl Factor for InterRobotFactor {

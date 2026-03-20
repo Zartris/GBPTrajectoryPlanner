@@ -1,5 +1,5 @@
 use gbp_comms::{CommsInterface, ObservationUpdate, RobotBroadcast, RobotId};
-use gbp_core::{FactorGraph, FactorKind, DynamicsFactor};
+use gbp_core::{Factor, FactorGraph, FactorKind, DynamicsFactor, InterRobotFactor};
 use gbp_map::{Map, MAX_HORIZON, MAX_NEIGHBOURS};
 use gbp_map::map::EdgeId;
 use heapless::Vec;
@@ -8,11 +8,15 @@ use crate::interrobot_set::InterRobotFactorSet;
 
 /// Number of dynamics factors = K-1 (one per adjacent timestep pair)
 const NUM_DYN_FACTORS: usize = MAX_HORIZON - 1;
-/// Max total factors = dynamics + inter-robot neighbours
-const MAX_FACTORS: usize = NUM_DYN_FACTORS + MAX_NEIGHBOURS;
+/// Max inter-robot factors = one per variable per neighbour (K * MAX_NEIGHBOURS)
+const MAX_IR_FACTORS: usize = MAX_HORIZON * MAX_NEIGHBOURS;
+/// Max total factors = dynamics + inter-robot
+const MAX_FACTORS: usize = NUM_DYN_FACTORS + MAX_IR_FACTORS;
 
 const GBP_ITERATIONS: usize = 15;
 const DT: f32 = 0.1; // seconds per GBP timestep
+const D_SAFE: f32 = 0.3; // minimum clearance (m)
+const SIGMA_R: f32 = 0.5; // inter-robot factor noise (weaker to avoid overwhelming dynamics)
 
 /// Output of one agent step.
 pub struct StepOutput {
@@ -31,6 +35,10 @@ pub struct RobotAgent<C: CommsInterface> {
     ir_set: InterRobotFactorSet,
     position_s:   f32,
     current_edge: EdgeId,
+    /// Cached last-known broadcasts — avoids dropping IR factors on empty ticks.
+    last_broadcasts: Vec<RobotBroadcast, MAX_NEIGHBOURS>,
+    /// Maximum allowed position (from safety cap). f32::MAX if unconstrained.
+    last_max_position: f32,
 }
 
 // SAFETY: Map pointer is valid for the lifetime of the agent.
@@ -60,12 +68,44 @@ impl<C: CommsInterface> RobotAgent<C> {
             ir_set: InterRobotFactorSet::new(),
             position_s: 0.0,
             current_edge: EdgeId(0),
+            last_broadcasts: Vec::new(),
+            last_max_position: f32::MAX,
         }
     }
 
     /// Assign a new planned trajectory as (edge_id, length) pairs starting at start_s.
     pub fn set_trajectory(&mut self, edges: Vec<(EdgeId, f32), { gbp_map::MAX_PATH_EDGES }>, start_s: f32) {
         self.trajectory = Some(Trajectory::new(edges, start_s));
+    }
+
+    /// Mutable access to comms (for broadcast_state in AgentRunner).
+    pub fn comms_mut(&mut self) -> &mut C {
+        &mut self.comms
+    }
+
+    /// Number of currently active inter-robot factors.
+    pub fn interrobot_factor_count(&self) -> usize {
+        self.ir_set.count()
+    }
+
+    /// Current belief means for all K variables.
+    pub fn belief_means(&self) -> [f32; MAX_HORIZON] {
+        let mut means = [0.0f32; MAX_HORIZON];
+        for (i, v) in self.graph.variables.iter().enumerate() {
+            means[i] = v.mean();
+        }
+        means
+    }
+
+    /// Current belief variances for all K variables.
+    pub fn last_max_position(&self) -> f32 { self.last_max_position }
+
+    pub fn belief_vars(&self) -> [f32; MAX_HORIZON] {
+        let mut vars = [0.0f32; MAX_HORIZON];
+        for (i, v) in self.graph.variables.iter().enumerate() {
+            vars[i] = v.variance().min(1e6);
+        }
+        vars
     }
 
     /// Run one step of GBP and return commanded velocity.
@@ -81,8 +121,13 @@ impl<C: CommsInterface> RobotAgent<C> {
         self.graph.variables[0].eta = self.graph.variables[0].prior_eta;
         self.graph.variables[0].lambda = self.graph.variables[0].prior_lambda;
 
-        // 1. Receive broadcasts from neighbours
-        let broadcasts = self.comms.receive_broadcasts();
+        // 1. Receive broadcasts from neighbours. If none arrived this tick,
+        // use the cached version so IR factors don't flicker on/off.
+        let fresh = self.comms.receive_broadcasts();
+        if !fresh.is_empty() {
+            self.last_broadcasts = fresh;
+        }
+        let broadcasts = self.last_broadcasts.clone();
 
         // 2. Update inter-robot factors (add/remove as planned edges change)
         self.update_interrobot_factors(&broadcasts, map);
@@ -99,12 +144,56 @@ impl<C: CommsInterface> RobotAgent<C> {
         // 6. Extract commanded velocity from first dynamics factor (s_1 - s_0) / dt
         let s0 = self.graph.variables[0].mean();
         let s1 = self.graph.variables[1].mean();
-        let velocity = ((s1 - s0) / DT).max(0.0);
+        let mut velocity = ((s1 - s0) / DT).max(0.0);
 
-        // 7. Broadcast state
+        // 7. Safety: hard position cap — never advance past (nearest_ahead - d_safe)
+        let max_s = self.max_position(&broadcasts);
+        self.last_max_position = max_s;
+        if max_s < f32::MAX {
+            let remaining = max_s - self.position_s;
+            if remaining <= 0.0 {
+                velocity = 0.0;
+            } else if remaining < D_SAFE * 2.0 {
+                let safety_factor = (remaining / (D_SAFE * 2.0)).clamp(0.0, 1.0);
+                velocity *= safety_factor;
+            }
+        }
+
+        // 8. Broadcast state
         let _ = self.comms.broadcast(&self.make_broadcast(velocity));
 
         StepOutput { velocity, position_s: self.position_s, current_edge: self.current_edge }
+    }
+
+    /// Find the distance to the nearest robot AHEAD of us on the trajectory.
+    /// Returns f32::MAX if no robot is ahead.
+    fn nearest_ahead_distance(&self, broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>) -> f32 {
+        let mut min_ahead = f32::MAX;
+        for bcast in broadcasts.iter() {
+            if bcast.robot_id == self.robot_id { continue; }
+            let gap = bcast.position_s - self.position_s; // positive = ahead
+            if gap > -D_SAFE && gap < min_ahead {
+                // Include robots slightly behind us too (within d_safe) to prevent
+                // position overshoot from one-tick lag
+                min_ahead = gap;
+            }
+        }
+        min_ahead
+    }
+
+    /// Maximum position we can advance to, given robots strictly ahead of us.
+    /// Returns f32::MAX if unconstrained.
+    fn max_position(&self, broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>) -> f32 {
+        let mut limit = f32::MAX;
+        for bcast in broadcasts.iter() {
+            if bcast.robot_id == self.robot_id { continue; }
+            // Only consider robots ahead of us (positive gap)
+            if bcast.position_s > self.position_s {
+                let cap = bcast.position_s - D_SAFE;
+                if cap < limit { limit = cap; }
+            }
+        }
+        limit
     }
 
     fn update_dynamics_v_nom(&mut self, map: &Map) {
@@ -124,18 +213,119 @@ impl<C: CommsInterface> RobotAgent<C> {
 
     fn update_interrobot_factors(
         &mut self,
-        _broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>,
+        broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>,
         _map: &Map,
     ) {
-        // Stub: full implementation in M3 when multi-robot is introduced.
+        let my_edges = self.planned_edge_ids();
+        let mut active_ids: Vec<RobotId, MAX_NEIGHBOURS> = Vec::new();
+
+        for bcast in broadcasts.iter() {
+            if bcast.robot_id == self.robot_id { continue; }
+
+            let shares_edge = bcast.planned_edges.iter().any(|e| my_edges.contains(e))
+                || my_edges.contains(&bcast.current_edge);
+            if !shares_edge {
+                // Remove any existing factors for this robot
+                if self.ir_set.contains_robot(bcast.robot_id) {
+                    self.ir_set.remove_robot(bcast.robot_id, &mut self.graph);
+                }
+                continue;
+            }
+
+            let _ = active_ids.push(bcast.robot_id);
+            let activation_range = D_SAFE * 3.0;
+
+            // For EACH variable k, check if our predicted position is close
+            // to the neighbour's predicted position at the same timestep.
+            for k in 0..MAX_HORIZON {
+                let my_s_k = self.graph.variables[k].mean();
+                let their_s_k = if k < bcast.belief_means.len() {
+                    bcast.belief_means[k]
+                } else {
+                    bcast.position_s
+                };
+                let dist = (my_s_k - their_s_k).abs();
+
+                if dist < activation_range {
+                    // Add factor at this timestep if we don't have one already
+                    if !self.ir_set.contains(bcast.robot_id, k) {
+                        let factor = InterRobotFactor::new(k, D_SAFE, SIGMA_R);
+                        if let Ok(idx) = self.graph.add_factor(FactorKind::InterRobot(factor)) {
+                            self.ir_set.insert(bcast.robot_id, k, idx);
+                        }
+                    }
+                } else {
+                    // Too far apart at this timestep — remove factor if it exists
+                    // (skip for now to avoid complex mid-array removal; factors deactivate via is_active)
+                }
+            }
+        }
+
+        // Remove all factors for robots no longer sharing edges
+        let mut to_remove: Vec<RobotId, MAX_NEIGHBOURS> = Vec::new();
+        for &(rid, _, _) in self.ir_set.iter() {
+            if !active_ids.contains(&rid) && !to_remove.contains(&rid) {
+                let _ = to_remove.push(rid);
+            }
+        }
+        for rid in to_remove.iter() {
+            self.ir_set.remove_robot(*rid, &mut self.graph);
+        }
     }
 
     fn update_interrobot_jacobians(
         &mut self,
-        _broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>,
+        broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>,
         _map: &Map,
     ) {
-        // Stub: full implementation in M3.
+        for bcast in broadcasts.iter() {
+            if bcast.robot_id == self.robot_id { continue; }
+
+            // Collect (k, factor_idx) pairs for this robot to avoid borrow issues
+            let mut pairs: Vec<(usize, usize), MAX_HORIZON> = Vec::new();
+            for (k, fidx) in self.ir_set.factors_for(bcast.robot_id) {
+                let _ = pairs.push((k, fidx));
+            }
+
+            for &(k, factor_idx) in pairs.iter() {
+                let s_a = self.graph.variables[k].mean();
+                let s_b = if k < bcast.belief_means.len() {
+                    bcast.belief_means[k]
+                } else {
+                    bcast.position_s
+                };
+
+                if let Some(FactorKind::InterRobot(irf)) = self.graph.get_factor_kind_mut(factor_idx) {
+                    let diff = s_a - s_b;
+                    let dist = diff.abs();
+
+                    // Jacobian: d(dist)/d(s_a) = sign(s_a - s_b)
+                    let sign = if diff >= 0.0 { 1.0 } else { -1.0 };
+                    irf.jacobian_a = -sign; // negative because residual = d_safe - dist
+                    irf.jacobian_b = sign;
+                    irf.dist = dist;
+
+                    // Set external belief of robot B from its broadcast
+                    if !bcast.belief_means.is_empty() && !bcast.belief_vars.is_empty() {
+                        let ext_mean = bcast.belief_means[0];
+                        let ext_var = bcast.belief_vars[0].max(1e-6);
+                        irf.ext_lambda_b = 1.0 / ext_var;
+                        irf.ext_eta_b = irf.ext_lambda_b * ext_mean;
+                    }
+
+                    // Activate factor only when robots are close enough to matter
+                    irf.set_active(dist < D_SAFE * 5.0);
+                }
+            }
+        }
+    }
+
+    /// Get planned edge IDs from the trajectory.
+    fn planned_edge_ids(&self) -> Vec<EdgeId, { gbp_map::MAX_PATH_EDGES }> {
+        match &self.trajectory {
+            Some(t) => t.edge_ids(),
+            None => Vec::new(),
+        }
     }
 
     fn make_broadcast(&self, velocity: f32) -> RobotBroadcast {
@@ -151,10 +341,21 @@ impl<C: CommsInterface> RobotAgent<C> {
             position_s: self.position_s,
             velocity,
             pos: [0.0; 3],
-            planned_edges: Vec::new(),
+            planned_edges: self.planned_edge_ids_horizon(),
             belief_means: means,
             belief_vars: vars,
             gbp_timesteps: Vec::new(),
         }
+    }
+
+    /// Planned edge IDs with MAX_HORIZON capacity (for broadcasts).
+    fn planned_edge_ids_horizon(&self) -> Vec<EdgeId, MAX_HORIZON> {
+        let mut pe = Vec::new();
+        if let Some(t) = &self.trajectory {
+            for &eid in t.edge_ids().iter().take(MAX_HORIZON) {
+                let _ = pe.push(eid);
+            }
+        }
+        pe
     }
 }

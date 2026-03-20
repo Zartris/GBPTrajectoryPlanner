@@ -33,6 +33,11 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
         self.factors.swap_remove(idx).kind
     }
 
+    /// Get immutable access to a factor's FactorKind.
+    pub fn get_factor_kind(&self, idx: usize) -> Option<&FactorKind> {
+        self.factors.get(idx).map(|f| &f.kind)
+    }
+
     /// Get mutable access to a factor's FactorKind (for setting v_nom, Jacobians, etc.)
     pub fn get_factor_kind_mut(&mut self, idx: usize) -> Option<&mut FactorKind> {
         self.factors.get_mut(idx).map(|f| &mut f.kind)

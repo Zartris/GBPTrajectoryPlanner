@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
 use gbp_agent::RobotAgent;
-use gbp_comms::{ObservationUpdate, RobotStateMsg, RobotSource};
+use gbp_comms::{CommsInterface, ObservationUpdate, RobotBroadcast, RobotStateMsg, RobotSource};
 use gbp_map::map::{EdgeId, Map};
 use gbp_map::MAX_HORIZON;
 use heapless::Vec as HVec;
@@ -16,6 +16,7 @@ use crate::sim_comms::SimComms;
 pub struct AgentRunner {
     _map: Arc<Map>,
     agent: RobotAgent<SimComms>,
+    robot_id: u32,
     /// (EdgeId, edge_length) pairs — the full trajectory
     trajectory_edges: HVec<(EdgeId, f32), { gbp_map::MAX_PATH_EDGES }>,
     /// Total path length (sum of all edge lengths)
@@ -30,6 +31,7 @@ impl AgentRunner {
         Self {
             _map: map,
             agent,
+            robot_id,
             trajectory_edges: HVec::new(),
             total_length: 0.0,
             last_reported_edge: None,
@@ -43,6 +45,13 @@ impl AgentRunner {
         self.last_reported_edge = None;
         self.agent.set_trajectory(edges, 0.0);
         self.total_length
+    }
+
+    /// Set a single-edge trajectory for testing.
+    pub fn set_single_edge_trajectory(&mut self, edge_id: EdgeId, length: f32) {
+        let mut edges = HVec::new();
+        let _ = edges.push((edge_id, length));
+        self.set_trajectory(edges);
     }
 
     /// Map global arc-length s to (edge_id, local_s) by walking the trajectory.
@@ -69,7 +78,7 @@ impl AgentRunner {
         // Log edge transitions
         if self.last_reported_edge != Some(current_edge) {
             if let Some(prev) = self.last_reported_edge {
-                tracing::info!("edge transition: {:?} -> {:?} (s={:.2})", prev, current_edge, global_s);
+                tracing::info!("robot {}: edge transition: {:?} -> {:?} (s={:.2})", self.robot_id, prev, current_edge, global_s);
             }
             self.last_reported_edge = Some(current_edge);
         }
@@ -87,12 +96,32 @@ impl AgentRunner {
             None => [0.0, 0.0, 0.0],
         };
 
+        // Extract belief means and variances
+        let belief_means = self.agent.belief_means();
+        let belief_vars = self.agent.belief_vars();
+
         StepOut {
             velocity: out.velocity,
             current_edge,
             local_s,
             pos_3d,
+            active_factor_count: self.agent.interrobot_factor_count(),
+            belief_means,
+            belief_vars,
+            max_position: self.agent.last_max_position(),
         }
+    }
+
+    /// Broadcast this robot's current state so other robots' SimComms can receive it.
+    pub fn broadcast_state(&mut self, current_edge: EdgeId, position_s: f32) {
+        let msg = RobotBroadcast {
+            robot_id: self.robot_id,
+            current_edge,
+            position_s,
+            planned_edges: self.planned_edges_snapshot(),
+            ..Default::default()
+        };
+        let _ = self.agent.comms_mut().broadcast(&msg);
     }
 
     /// Edge IDs for the planned path (for visualiser dashed gizmo).
@@ -103,6 +132,15 @@ impl AgentRunner {
         }
         ids
     }
+
+    /// Snapshot of planned edges for broadcast (using MAX_HORIZON capacity).
+    fn planned_edges_snapshot(&self) -> HVec<EdgeId, MAX_HORIZON> {
+        let mut pe = HVec::new();
+        for &(eid, _) in self.trajectory_edges.iter().take(MAX_HORIZON) {
+            let _ = pe.push(eid);
+        }
+        pe
+    }
 }
 
 pub struct StepOut {
@@ -110,6 +148,10 @@ pub struct StepOut {
     pub current_edge: EdgeId,
     pub local_s: f32,
     pub pos_3d: [f32; 3],
+    pub active_factor_count: usize,
+    pub belief_means: [f32; MAX_HORIZON],
+    pub belief_vars: [f32; MAX_HORIZON],
+    pub max_position: f32,
 }
 
 /// Runs at 20 Hz: reads global position, steps agent, writes velocity back.
@@ -117,6 +159,7 @@ pub async fn agent_task(
     physics: Arc<Mutex<PhysicsState>>,
     runner: Arc<Mutex<AgentRunner>>,
     tx: broadcast::Sender<RobotStateMsg>,
+    robot_id: u32,
 ) {
     let mut ticker = interval(Duration::from_millis(50)); // 20 Hz
     loop {
@@ -124,23 +167,51 @@ pub async fn agent_task(
 
         let global_s = physics.lock().unwrap_or_else(|e| e.into_inner()).position_s;
 
-        let out = runner.lock().unwrap_or_else(|e| e.into_inner()).step(global_s);
+        let out = {
+            let mut r = runner.lock().unwrap_or_else(|e| e.into_inner());
+            let out = r.step(global_s);
+            if out.active_factor_count > 0 {
+                tracing::info!(
+                    "robot {}: s={:.3} v={:.3} ir_factors={}",
+                    robot_id, global_s, out.velocity, out.active_factor_count,
+                );
+            }
+            // Broadcast state after step so other robots can see us
+            r.broadcast_state(out.current_edge, global_s);
+            out
+        };
 
-        physics.lock().unwrap_or_else(|e| e.into_inner()).velocity = out.velocity;
+        {
+            let mut p = physics.lock().unwrap_or_else(|e| e.into_inner());
+            p.velocity = out.velocity;
+            // Hard position clamp: if we've crept past max_position, snap back
+            if out.max_position < f32::MAX && p.position_s > out.max_position {
+                p.position_s = out.max_position;
+                p.velocity = 0.0;
+            }
+        }
 
         let planned_edges = runner.lock().unwrap_or_else(|e| e.into_inner()).planned_edge_ids();
 
         let msg = RobotStateMsg {
-            robot_id: 0,
+            robot_id,
             current_edge: out.current_edge,
             position_s: out.local_s,
             velocity: out.velocity,
             pos_3d: out.pos_3d,
             source: RobotSource::Simulated,
-            belief_means: [0.0; MAX_HORIZON],
-            belief_vars: [0.0; MAX_HORIZON],
+            belief_means: out.belief_means,
+            belief_vars: out.belief_vars,
             planned_edges,
-            active_factors: HVec::new(),
+            ir_factor_count: out.active_factor_count as u16,
+            active_factors: {
+                let mut af = HVec::new();
+                if out.active_factor_count > 0 {
+                    let other = if robot_id == 0 { 1 } else { 0 };
+                    let _ = af.push(other);
+                }
+                af
+            },
         };
         let _ = tx.send(msg);
     }
@@ -150,6 +221,20 @@ pub async fn agent_task(
 mod tests {
     use super::*;
     use gbp_map::map::*;
+
+    fn straight_map() -> Map {
+        let mut m = Map::new("straight");
+        m.add_node(Node { id: NodeId(0), position: [0.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+        m.add_node(Node { id: NodeId(1), position: [5.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+        let sp = SpeedProfile { max: 2.5, nominal: 2.0, accel_limit: 1.0, decel_limit: 1.0 };
+        let sf = SafetyProfile { clearance: 0.3 };
+        m.add_edge(Edge {
+            id: EdgeId(0), start: NodeId(0), end: NodeId(1),
+            geometry: EdgeGeometry::Line { start: [0.0,0.0,0.0], end: [5.0,0.0,0.0], length: 5.0 },
+            speed: sp, safety: sf,
+        }).unwrap();
+        m
+    }
 
     fn two_edge_map() -> (Arc<Map>, HVec<(EdgeId, f32), { gbp_map::MAX_PATH_EDGES }>) {
         let mut m = Map::new("two");
@@ -174,10 +259,15 @@ mod tests {
         (Arc::new(m), traj)
     }
 
+    fn make_comms() -> SimComms {
+        let (tx, rx) = tokio::sync::broadcast::channel::<RobotBroadcast>(64);
+        SimComms::new(tx, rx)
+    }
+
     #[test]
     fn edge_at_s_first_edge() {
         let (map, traj) = two_edge_map();
-        let mut runner = AgentRunner::new(SimComms, map, 0);
+        let mut runner = AgentRunner::new(make_comms(), map, 0);
         runner.set_trajectory(traj);
         let (edge, local) = runner.edge_at_s(2.5);
         assert_eq!(edge, EdgeId(0));
@@ -187,7 +277,7 @@ mod tests {
     #[test]
     fn edge_at_s_second_edge() {
         let (map, traj) = two_edge_map();
-        let mut runner = AgentRunner::new(SimComms, map, 0);
+        let mut runner = AgentRunner::new(make_comms(), map, 0);
         runner.set_trajectory(traj);
         let (edge, local) = runner.edge_at_s(7.0);
         assert_eq!(edge, EdgeId(1));
@@ -197,7 +287,7 @@ mod tests {
     #[test]
     fn edge_at_s_past_end() {
         let (map, traj) = two_edge_map();
-        let mut runner = AgentRunner::new(SimComms, map, 0);
+        let mut runner = AgentRunner::new(make_comms(), map, 0);
         runner.set_trajectory(traj);
         let (edge, local) = runner.edge_at_s(12.0);
         assert_eq!(edge, EdgeId(1));
@@ -207,7 +297,7 @@ mod tests {
     #[test]
     fn step_returns_positive_velocity() {
         let (map, traj) = two_edge_map();
-        let mut runner = AgentRunner::new(SimComms, map, 0);
+        let mut runner = AgentRunner::new(make_comms(), map, 0);
         runner.set_trajectory(traj);
         let out = runner.step(0.0);
         assert!(out.velocity > 0.0, "v={}", out.velocity);
@@ -216,8 +306,46 @@ mod tests {
     #[test]
     fn total_length_is_sum_of_edges() {
         let (map, traj) = two_edge_map();
-        let mut runner = AgentRunner::new(SimComms, map, 0);
+        let mut runner = AgentRunner::new(make_comms(), map, 0);
         let total = runner.set_trajectory(traj);
         assert!((total - 10.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn update_interrobot_factors_spawns_factor_when_same_edge() {
+        let map = std::sync::Arc::new(straight_map());
+        let (tx, rx0) = tokio::sync::broadcast::channel::<RobotBroadcast>(32);
+        let rx1 = tx.subscribe();
+        let comms0 = SimComms::new(tx.clone(), rx0);
+        let comms1 = SimComms::new(tx.clone(), rx1);
+        let mut runner0 = AgentRunner::new(comms0, map.clone(), 0);
+        runner0.set_single_edge_trajectory(EdgeId(0), 5.0);
+        let mut runner1 = AgentRunner::new(comms1, map.clone(), 1);
+        runner1.set_single_edge_trajectory(EdgeId(0), 5.0);
+
+        // Robot 1 broadcasts its state so robot 0 can see it
+        runner1.broadcast_state(EdgeId(0), 4.0);
+
+        // Robot 0 steps — should spawn InterRobotFactor because they share EdgeId(0)
+        let out = runner0.step(0.5);
+        assert!(out.active_factor_count > 0, "expected inter-robot factor to be spawned");
+    }
+
+    #[test]
+    fn iterate_runs_without_panic_with_two_robots() {
+        let map = std::sync::Arc::new(straight_map());
+        let (tx, rx0) = tokio::sync::broadcast::channel::<RobotBroadcast>(32);
+        let rx1 = tx.subscribe();
+        let comms0 = SimComms::new(tx.clone(), rx0);
+        let comms1 = SimComms::new(tx.clone(), rx1);
+        let mut runner0 = AgentRunner::new(comms0, map.clone(), 0);
+        runner0.set_single_edge_trajectory(EdgeId(0), 5.0);
+        let mut runner1 = AgentRunner::new(comms1, map.clone(), 1);
+        runner1.set_single_edge_trajectory(EdgeId(0), 5.0);
+        runner1.broadcast_state(EdgeId(0), 3.5);
+        // Steps with GBP iterate — should not panic
+        for s in [0.5_f32, 1.0, 1.5, 2.0] {
+            let _ = runner0.step(s);
+        }
     }
 }

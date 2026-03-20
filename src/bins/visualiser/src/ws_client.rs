@@ -88,6 +88,7 @@ mod tests {
             belief_vars: [0.0; MAX_HORIZON],
             planned_edges: heapless::Vec::new(),
             active_factors: heapless::Vec::new(),
+            ir_factor_count: 0,
         }
     }
 
