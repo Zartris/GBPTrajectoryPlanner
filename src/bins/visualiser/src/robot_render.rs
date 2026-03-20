@@ -35,8 +35,12 @@ fn spawn_robot_arrow(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Cone pointing along +Y in mesh space; we rotate to align with tangent.
-    let cone = meshes.add(Cone { radius: 0.08, height: 0.25 });
-    let mat  = materials.add(StandardMaterial::from_color(Color::srgb(0.2, 0.6, 1.0)));
+    let cone = meshes.add(Cone { radius: 0.2, height: 0.5 });
+    let mat  = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.1, 0.7, 1.0),
+        emissive: bevy::color::LinearRgba::new(0.1, 0.5, 1.0, 1.0),
+        ..default()
+    });
     commands.spawn((
         Mesh3d(cone),
         MeshMaterial3d(mat),

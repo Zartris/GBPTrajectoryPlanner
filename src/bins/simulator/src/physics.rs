@@ -19,9 +19,15 @@ impl PhysicsState {
         Self { position_s: 0.0, velocity: 0.0, edge_length }
     }
 
-    /// Integrate one timestep.
+    /// Integrate one timestep. Wraps around to 0 when reaching edge_length (demo loop).
     pub fn step(&mut self, dt: f32) {
-        self.position_s = (self.position_s + self.velocity * dt).clamp(0.0, self.edge_length);
+        self.position_s += self.velocity * dt;
+        if self.position_s >= self.edge_length {
+            self.position_s = 0.0; // loop back to start
+        }
+        if self.position_s < 0.0 {
+            self.position_s = 0.0;
+        }
     }
 }
 

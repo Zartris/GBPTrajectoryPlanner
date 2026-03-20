@@ -33,6 +33,7 @@ fn main() {
     ws_client::spawn_ws_client(ws_url, Arc::clone(&inbox));
 
     App::new()
+        .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.1))) // dark blue background
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "GBP Trajectory Planner".into(),
