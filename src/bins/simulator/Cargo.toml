@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 gbp-comms  = { path = "../../../crates/gbp-comms", features = ["serde"] }
 gbp-map    = { path = "../../../crates/gbp-map", features = ["parse"] }
+heapless   = { workspace = true }
 tokio      = { workspace = true }
 axum       = { workspace = true }
 serde_json = { workspace = true }
