@@ -256,25 +256,38 @@ fn draw_belief_tubes(
     }
 }
 
-/// Draw a line between each pair of robots that have active inter-robot factors.
+/// Draw red lines between paired variable positions at the same timestep k.
+/// For each pair of robots with active IR factors, connects their belief dots.
 fn draw_factor_links(
+    map: Res<MapRes>,
     states: Res<RobotStates>,
     mut gizmos: Gizmos,
 ) {
-    let robots: Vec<(u32, [f32; 3])> = states.0.iter()
-        .filter(|(_, s)| s.active_factor_count > 0)
-        .map(|(&id, s)| (id, s.pos_3d))
-        .collect();
+    // Collect robots with active factors and their belief world positions
+    let up = Vec3::new(0.0, 0.15, 0.0);
+    let mut robot_pts: Vec<(u32, std::vec::Vec<Vec3>)> = std::vec::Vec::new();
 
-    for i in 0..robots.len() {
-        for j in (i+1)..robots.len() {
-            let (_, pos_i) = robots[i];
-            let (_, pos_j) = robots[j];
-            gizmos.line(
-                Vec3::from(pos_i),
-                Vec3::from(pos_j),
-                Color::srgba(1.0, 0.3, 0.3, 0.8),
-            );
+    for (&id, state) in &states.0 {
+        if state.active_factor_count == 0 { continue; }
+        let edge_ids: std::vec::Vec<EdgeId> = state.planned_edges.iter().copied().collect();
+        let pts = belief_tube_positions_trajectory(&map.0, &edge_ids, &state.belief_means);
+        let world_pts: std::vec::Vec<Vec3> = pts.iter().map(|p| Vec3::from(*p) + up).collect();
+        robot_pts.push((id, world_pts));
+    }
+
+    // Draw red lines between matching timestep k for each pair of robots
+    for i in 0..robot_pts.len() {
+        for j in (i + 1)..robot_pts.len() {
+            let k_max = robot_pts[i].1.len().min(robot_pts[j].1.len());
+            for k in 0..k_max {
+                let a = robot_pts[i].1[k];
+                let b = robot_pts[j].1[k];
+                let dist = (a - b).length();
+                // Only draw if the variables are close enough to have an active factor
+                if dist < 2.0 {
+                    gizmos.line(a, b, Color::srgba(1.0, 0.2, 0.2, 0.6));
+                }
+            }
         }
     }
 }
