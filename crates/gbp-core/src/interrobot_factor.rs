@@ -42,7 +42,8 @@ impl Factor for InterRobotFactor {
 
     fn linearize(&self, _variables: &[VariableNode]) -> LinearizedFactor {
         let residual = self.d_safe - self.dist;
-        let prec = 1.0 / (self.sigma_r * self.sigma_r);
+        let sigma_r = f32::max(self.sigma_r, 1e-6);
+        let prec = 1.0 / (sigma_r * sigma_r);
 
         // Joint information matrix (2x2, pairwise between A and B)
         let xi_aa = prec * self.jacobian_a * self.jacobian_a;

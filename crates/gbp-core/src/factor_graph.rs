@@ -51,6 +51,7 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
     fn factor_to_variable_pass(&mut self) {
         for f in self.factors.iter_mut() {
             if !f.kind.as_factor().is_active() { continue; }
+            f.kind.as_factor_mut().update(&self.variables);
             let var_indices = f.kind.as_factor().variable_indices();
 
             if var_indices.len() == 1 {

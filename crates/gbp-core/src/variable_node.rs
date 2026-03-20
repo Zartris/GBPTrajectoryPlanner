@@ -14,7 +14,8 @@ pub struct VariableNode {
 impl VariableNode {
     pub fn new(mean: f32, variance: f32) -> Self {
         let lambda = if variance > 1e-30 { 1.0 / variance } else { 0.0 };
-        Self { eta: lambda * mean, lambda, prior_eta: 0.0, prior_lambda: 1e-6 }
+        let eta = lambda * mean;
+        Self { eta, lambda, prior_eta: eta, prior_lambda: lambda }
     }
 
     pub fn mean(&self) -> f32 {

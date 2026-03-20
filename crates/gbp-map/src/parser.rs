@@ -104,11 +104,23 @@ pub fn parse_yaml(yaml: &str) -> Result<Map, String> {
 
         let geometry = match &ye.geometry {
             YamlGeometry::Line { points, length } => {
+                if points.len() < 2 {
+                    return Err(std::string::String::from("Line geometry requires at least 2 points"));
+                }
                 let start = [points[0][0] as f32, points[0][1] as f32, points[0][2] as f32];
                 let end   = [points[1][0] as f32, points[1][1] as f32, points[1][2] as f32];
                 EdgeGeometry::Line { start, end, length: *length as f32 }
             }
             YamlGeometry::Spline { control_points, knots, degree, .. } => {
+                if *degree > 15 {
+                    return Err(std::string::String::from("NURBS degree must be <= 15"));
+                }
+                if control_points.len() < (*degree as usize) + 1 {
+                    return Err(std::string::String::from("NURBS requires control_points.len() >= degree + 1"));
+                }
+                if knots.len() != control_points.len() + (*degree as usize) + 1 {
+                    return Err(std::string::String::from("NURBS requires knots.len() == control_points.len() + degree + 1"));
+                }
                 let mut cps: heapless::Vec<[f32; 3], 16> = heapless::Vec::new();
                 for cp in control_points {
                     cps.push([cp[0] as f32, cp[1] as f32, cp[2] as f32])

@@ -13,6 +13,17 @@ pub fn eval_point(
     knots: &heapless::Vec<f32, MAX_KNOTS>,
     degree: usize,
 ) -> [f32; 3] {
+    // Validate inputs to avoid underflow and out-of-bounds panics.
+    if cps.is_empty() {
+        return [0.0; 3];
+    }
+    if degree >= cps.len() {
+        return [0.0; 3];
+    }
+    let required_knots = cps.len() + degree + 1;
+    if knots.len() < required_knots {
+        return [0.0; 3];
+    }
     let n = cps.len() - 1;
     let t_clamped = t.clamp(knots[degree], knots[n + 1]);
     let span = find_knot_span(n, degree, t_clamped, knots);
@@ -132,7 +143,11 @@ fn basis_functions(
     p: usize,
     knots: &heapless::Vec<f32, MAX_KNOTS>,
 ) -> [f32; 16] {
-    debug_assert!(p < 16, "degree {} exceeds basis_functions array capacity (max 15)", p);
+    if p >= 16 {
+        let mut b = [0.0f32; 16];
+        b[0] = 1.0;
+        return b;
+    }
     let mut b = [0.0f32; 16];
     let mut left  = [0.0f32; 16];
     let mut right = [0.0f32; 16];

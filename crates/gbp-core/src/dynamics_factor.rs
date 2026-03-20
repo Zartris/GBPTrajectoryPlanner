@@ -15,6 +15,8 @@ pub struct DynamicsFactor {
 
 impl DynamicsFactor {
     pub fn new(var_indices: [usize; 2], dt: f32, sigma: f32, v_nom: f32) -> Self {
+        let dt = f32::max(dt, 1e-6);
+        let sigma = f32::max(sigma, 1e-6);
         Self { var_indices, dt, sigma, v_nom }
     }
     pub fn set_v_nom(&mut self, v: f32) { self.v_nom = v; }

@@ -64,7 +64,7 @@ impl<C: CommsInterface> RobotAgent<C> {
     }
 
     /// Assign a new planned trajectory as (edge_id, length) pairs starting at start_s.
-    pub fn set_trajectory(&mut self, edges: Vec<(EdgeId, f32), 32>, start_s: f32) {
+    pub fn set_trajectory(&mut self, edges: Vec<(EdgeId, f32), { gbp_map::MAX_PATH_EDGES }>, start_s: f32) {
         self.trajectory = Some(Trajectory::new(edges, start_s));
     }
 

@@ -132,7 +132,8 @@ impl Map {
         for (idx, edge) in self.edges.iter().enumerate() {
             let start_slot = edge.start.0 as usize;
             if start_slot < MAX_NODES {
-                let _ = self.outgoing[start_slot].push(idx as u16);
+                self.outgoing[start_slot].push(idx as u16)
+                    .expect("too many outgoing edges for node");
             }
         }
     }
@@ -150,6 +151,7 @@ impl Map {
         let start_slot = edge.start.0 as usize;
         if start_slot >= MAX_NODES { return Err(()); }
         if self.node_index(edge.start).is_none() { return Err(()); }
+        if self.node_index(edge.end).is_none() { return Err(()); }
         let edge_idx = self.edges.len() as u16;
         self.outgoing[start_slot].push(edge_idx).map_err(|_| ())?;
         let id = edge.id;
@@ -163,6 +165,20 @@ impl Map {
 
     pub fn edge_index(&self, id: EdgeId) -> Option<usize> {
         self.edges.iter().position(|e| e.id == id)
+    }
+
+    /// Rebuild outgoing adjacency AND NURBS arc tables after deserialization.
+    pub fn rebuild_after_deserialize(&mut self) {
+        self.rebuild_outgoing();
+        for edge in self.edges.iter_mut() {
+            if let EdgeGeometry::Nurbs(ref mut n) = edge.geometry {
+                let (arc_t, arc_s) = crate::nurbs::build_arc_table(
+                    &n.control_points, &n.knots, n.degree as usize
+                );
+                n.arc_t = arc_t;
+                n.arc_s = arc_s;
+            }
+        }
     }
 
     /// Evaluate 3D position at arc-length s along edge.

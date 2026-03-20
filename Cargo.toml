@@ -11,5 +11,5 @@ members = [
 heapless   = { version = "0.8", default-features = false }
 postcard   = { version = "1",   default-features = false }
 libm       = { version = "0.2", default-features = false }
-serde      = { version = "1",   features = ["derive"] }
+serde      = { version = "1",   default-features = false, features = ["derive"] }
 serde_yaml = { version = "0.9" }
