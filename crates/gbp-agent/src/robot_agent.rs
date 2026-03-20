@@ -5,6 +5,7 @@ use gbp_map::map::EdgeId;
 use heapless::Vec;
 use crate::trajectory::Trajectory;
 use crate::interrobot_set::InterRobotFactorSet;
+use crate::dynamic_constraints::DynamicConstraints;
 
 /// Number of dynamics factors = K-1 (one per adjacent timestep pair)
 const NUM_DYN_FACTORS: usize = MAX_HORIZON - 1;
@@ -18,9 +19,7 @@ const DT: f32 = 0.1; // seconds per GBP timestep
 const D_SAFE: f32 = 0.3; // minimum clearance (m)
 const SIGMA_R: f32 = 0.15; // inter-robot factor noise — stronger than dynamics (sigma_dyn=0.5)
                             // precision = 1/0.15^2 ≈ 44 vs dynamics precision = 1/0.5^2 = 4
-const MAX_ACCEL: f32 = 2.5; // m/s² — max acceleration/deceleration
-const MAX_JERK: f32 = 5.0;  // m/s³ — max rate of acceleration change
-const AGENT_DT: f32 = 0.02; // 50 Hz agent tick (for jerk/accel rate limiting)
+const AGENT_DT: f32 = 0.02; // 50 Hz agent tick
 
 /// Output of one agent step.
 pub struct StepOutput {
@@ -41,10 +40,9 @@ pub struct RobotAgent<C: CommsInterface> {
     current_edge: EdgeId,
     /// 3D world position (updated each step from map eval)
     pos_3d: [f32; 3],
-    /// Previous velocity for accel/jerk limiting
-    last_velocity: f32,
-    /// Previous acceleration for jerk limiting
-    last_accel: f32,
+    /// Post-GBP dynamic constraints (jerk, accel, speed limits).
+    /// NOT part of the factor graph — applied after GBP solves for trajectory.
+    constraints: DynamicConstraints,
     /// Cached last-known broadcasts — avoids dropping IR factors on empty ticks.
     last_broadcasts: Vec<RobotBroadcast, MAX_NEIGHBOURS>,
     /// Maximum allowed position (from safety cap). f32::MAX if unconstrained.
@@ -79,8 +77,7 @@ impl<C: CommsInterface> RobotAgent<C> {
             position_s: 0.0,
             current_edge: EdgeId(0),
             pos_3d: [0.0; 3],
-            last_velocity: 0.0,
-            last_accel: 0.0,
+            constraints: DynamicConstraints::new(2.5, 5.0, 2.5),
             last_broadcasts: Vec::new(),
             last_max_position: f32::MAX,
         }
@@ -163,23 +160,14 @@ impl<C: CommsInterface> RobotAgent<C> {
         let s1 = self.graph.variables[1].mean();
         let raw_velocity = ((s1 - s0) / DT).max(0.0);
 
-        // 7. Accel + jerk limiting — smooth the GBP output
-        let desired_accel = (raw_velocity - self.last_velocity) / AGENT_DT;
-        // Jerk limit: clamp rate of acceleration change
-        let jerk = (desired_accel - self.last_accel) / AGENT_DT;
-        let clamped_jerk = jerk.clamp(-MAX_JERK, MAX_JERK);
-        let accel = self.last_accel + clamped_jerk * AGENT_DT;
-        // Accel limit
-        let clamped_accel = accel.clamp(-MAX_ACCEL, MAX_ACCEL);
-        // Get max speed from current edge
+        // 7. Post-GBP dynamic constraints (NOT part of factor graph).
+        // Smooths the raw GBP velocity through jerk, accel, and speed limits.
         let max_speed = map.edges.iter()
             .find(|e| e.id == self.current_edge)
             .map(|e| e.speed.max)
             .unwrap_or(2.5);
-        let velocity = (self.last_velocity + clamped_accel * AGENT_DT).clamp(0.0, max_speed);
-
-        self.last_accel = clamped_accel;
-        self.last_velocity = velocity;
+        self.constraints.set_max_speed(max_speed);
+        let velocity = self.constraints.apply(raw_velocity, AGENT_DT);
 
         // 8. Safety monitoring — track 3D distance for hard clamp signal
         let dist_3d = self.min_3d_distance_to_neighbours(&broadcasts);
