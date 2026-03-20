@@ -123,8 +123,10 @@ async fn main() {
     tokio::spawn(async move {
         while let Some(json) = cmd_rx.recv().await {
             if let Ok(cmd) = serde_json::from_str::<TrajectoryCommand>(&json) {
-                let current_s = phys_cmd.lock().unwrap().position_s;
-                let cur_edge = phys_cmd.lock().unwrap().current_edge;
+                let (current_s, cur_edge) = {
+                    let p = phys_cmd.lock().unwrap_or_else(|e| e.into_inner());
+                    (p.position_s, p.current_edge)
+                };
                 // Find current node (start of current edge)
                 let from_node = map_cmd
                     .edges
@@ -136,7 +138,7 @@ async fn main() {
                     let traj = build_trajectory_edges(&map_cmd, &path);
                     runner_cmd
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(|e| e.into_inner())
                         .set_trajectory_from_edges(traj, current_s);
                     info!("replanned to {:?}", cmd.goal_node);
                 }

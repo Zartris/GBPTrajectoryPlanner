@@ -137,11 +137,11 @@ pub async fn agent_task(
     loop {
         ticker.tick().await;
         let (pos_s, phys_edge) = {
-            let p = physics.lock().unwrap();
+            let p = physics.lock().unwrap_or_else(|e| e.into_inner());
             (p.position_s, p.current_edge)
         };
 
-        let out = { runner.lock().unwrap().step(pos_s, phys_edge) };
+        let out = { runner.lock().unwrap_or_else(|e| e.into_inner()).step(pos_s, phys_edge) };
 
         // Drive edge transitions via agent's authoritative current_edge
         if out.current_edge != phys_edge {
@@ -151,11 +151,11 @@ pub async fn agent_task(
                 .find(|e| e.id == out.current_edge)
                 .map(|e| e.geometry.length())
                 .unwrap_or(1.0);
-            let mut p = physics.lock().unwrap();
+            let mut p = physics.lock().unwrap_or_else(|e| e.into_inner());
             p.transition_to(out.current_edge, new_len);
         }
         {
-            physics.lock().unwrap().velocity = out.velocity;
+            physics.lock().unwrap_or_else(|e| e.into_inner()).velocity = out.velocity;
         }
 
         let msg = RobotStateMsg {
@@ -168,7 +168,7 @@ pub async fn agent_task(
             belief_means: [0.0; MAX_HORIZON],
             belief_vars: [0.0; MAX_HORIZON],
             planned_edges: {
-                let snap = runner.lock().unwrap().planned_edges_snapshot();
+                let snap = runner.lock().unwrap_or_else(|e| e.into_inner()).planned_edges_snapshot();
                 let mut pe: HVec<EdgeId, MAX_HORIZON> = HVec::new();
                 for &eid in snap.iter().take(MAX_HORIZON) {
                     let _ = pe.push(eid);
