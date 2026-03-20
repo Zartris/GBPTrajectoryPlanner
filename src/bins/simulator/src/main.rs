@@ -154,8 +154,15 @@ async fn main() {
     if start0 == start1 {
         physics0.lock().unwrap().position_s = 0.2; // slight head start in follow mode
     }
-    let physics1 = Arc::new(Mutex::new(PhysicsState::new(total_length1)));
-    // Robot 1 starts at s=0.0 — only 0.2m behind, violating d_safe=0.3 clearance
+    // When both robots share the same goal, cap robot 1's total_length so it stops
+    // d_safe before the goal node. This prevents the end-node collision that the
+    // reactive safety cap can't fully prevent due to dynamics taper dominance.
+    let r1_total = if goal0 == goal1 {
+        (total_length1 - 0.5).max(0.1) // stop 0.5m before goal (> d_safe=0.3)
+    } else {
+        total_length1
+    };
+    let physics1 = Arc::new(Mutex::new(PhysicsState::new(r1_total)));
 
     // Relay: RobotStateMsg -> JSON
     let tx_json_relay = tx_json.clone();

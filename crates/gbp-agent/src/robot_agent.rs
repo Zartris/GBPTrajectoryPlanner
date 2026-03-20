@@ -154,12 +154,10 @@ impl<C: CommsInterface> RobotAgent<C> {
         let mut velocity = ((s1 - s0) / DT).max(0.0);
 
         // 7. Safety: 3D distance-based velocity cap.
-        // Slows down when any neighbour sharing edges is within 3*d_safe in 3D space.
-        // Full stop at d_safe. Works for both same-trajectory and merge scenarios.
         let dist_3d = self.min_3d_distance_to_neighbours(&broadcasts);
         if dist_3d <= D_SAFE {
             velocity = 0.0;
-            self.last_max_position = self.position_s; // freeze position
+            self.last_max_position = self.position_s;
         } else if dist_3d < D_SAFE * 3.0 {
             let safety_factor = ((dist_3d - D_SAFE) / (D_SAFE * 2.0)).clamp(0.0, 1.0);
             velocity *= safety_factor;

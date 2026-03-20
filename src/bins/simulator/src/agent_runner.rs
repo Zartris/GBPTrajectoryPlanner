@@ -158,14 +158,14 @@ pub struct StepOut {
     pub max_position: f32,
 }
 
-/// Runs at 20 Hz: reads global position, steps agent, writes velocity back.
+/// Runs at 50 Hz: reads global position, steps agent, writes velocity back.
 pub async fn agent_task(
     physics: Arc<Mutex<PhysicsState>>,
     runner: Arc<Mutex<AgentRunner>>,
     tx: broadcast::Sender<RobotStateMsg>,
     robot_id: u32,
 ) {
-    let mut ticker = interval(Duration::from_millis(50)); // 20 Hz
+    let mut ticker = interval(Duration::from_millis(20)); // 50 Hz (matches physics)
     loop {
         ticker.tick().await;
 
