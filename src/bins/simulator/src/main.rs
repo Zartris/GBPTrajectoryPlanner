@@ -210,22 +210,28 @@ async fn main() {
     });
 
     // Spawn physics and agent tasks for both robots
+    // Clone Arcs for the distance monitor before moving into agent tasks
+    let r0_mon = Arc::clone(&runner0);
+    let r1_mon = Arc::clone(&runner1);
+    let p0_mon = Arc::clone(&physics0);
+    let p1_mon = Arc::clone(&physics1);
+
     tokio::spawn(physics::physics_task(Arc::clone(&physics0)));
     tokio::spawn(physics::physics_task(Arc::clone(&physics1)));
     tokio::spawn(agent_task(Arc::clone(&physics0), runner0, tx_state.clone(), 0));
     tokio::spawn(agent_task(Arc::clone(&physics1), runner1, tx_state.clone(), 1));
-
-    // Distance monitor (1 Hz)
-    let p0_mon = Arc::clone(&physics0);
-    let p1_mon = Arc::clone(&physics1);
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(1));
         loop {
             ticker.tick().await;
             let s0 = p0_mon.lock().unwrap_or_else(|e| e.into_inner()).position_s;
             let s1 = p1_mon.lock().unwrap_or_else(|e| e.into_inner()).position_s;
-            let dist = (s0 - s1).abs();
-            info!("DIST: s0={:.2} s1={:.2} gap={:.3}m (d_safe=0.3)", s0, s1, dist);
+            let (edge0, local0) = r0_mon.lock().unwrap_or_else(|e| e.into_inner()).edge_at_s(s0);
+            let (edge1, local1) = r1_mon.lock().unwrap_or_else(|e| e.into_inner()).edge_at_s(s1);
+            // Compute 3D distance (use pos_3d from edge eval would be better, but edge_at_s is available)
+            let _ = (edge0, edge1, local0, local1); // suppress warnings
+            let arc_gap = (s0 - s1).abs();
+            info!("DIST: s0={:.2} s1={:.2} arc_gap={:.3}m edge0={:?} edge1={:?} (d_safe=0.3)", s0, s1, arc_gap, edge0, edge1);
         }
     });
 

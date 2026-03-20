@@ -35,6 +35,8 @@ pub struct RobotAgent<C: CommsInterface> {
     ir_set: InterRobotFactorSet,
     position_s:   f32,
     current_edge: EdgeId,
+    /// 3D world position (updated each step from map eval)
+    pos_3d: [f32; 3],
     /// Cached last-known broadcasts — avoids dropping IR factors on empty ticks.
     last_broadcasts: Vec<RobotBroadcast, MAX_NEIGHBOURS>,
     /// Maximum allowed position (from safety cap). f32::MAX if unconstrained.
@@ -68,6 +70,7 @@ impl<C: CommsInterface> RobotAgent<C> {
             ir_set: InterRobotFactorSet::new(),
             position_s: 0.0,
             current_edge: EdgeId(0),
+            pos_3d: [0.0; 3],
             last_broadcasts: Vec::new(),
             last_max_position: f32::MAX,
         }
@@ -115,6 +118,11 @@ impl<C: CommsInterface> RobotAgent<C> {
 
         let map = unsafe { &*self.map };
 
+        // Evaluate 3D position for safety cap and broadcast
+        if let Some(p) = map.eval_position(self.current_edge, self.position_s) {
+            self.pos_3d = p;
+        }
+
         // 0. Anchor variable[0] at observed position (strong prior)
         self.graph.variables[0].prior_eta = self.position_s * 1000.0;
         self.graph.variables[0].prior_lambda = 1000.0;
@@ -146,17 +154,19 @@ impl<C: CommsInterface> RobotAgent<C> {
         let s1 = self.graph.variables[1].mean();
         let mut velocity = ((s1 - s0) / DT).max(0.0);
 
-        // 7. Safety: hard position cap — never advance past (nearest_ahead - d_safe)
-        let max_s = self.max_position(&broadcasts);
-        self.last_max_position = max_s;
-        if max_s < f32::MAX {
-            let remaining = max_s - self.position_s;
-            if remaining <= 0.0 {
-                velocity = 0.0;
-            } else if remaining < D_SAFE * 2.0 {
-                let safety_factor = (remaining / (D_SAFE * 2.0)).clamp(0.0, 1.0);
-                velocity *= safety_factor;
-            }
+        // 7. Safety: 3D distance-based velocity cap.
+        // Slows down when any neighbour sharing edges is within 3*d_safe in 3D space.
+        // Full stop at d_safe. Works for both same-trajectory and merge scenarios.
+        let dist_3d = self.min_3d_distance_to_neighbours(&broadcasts);
+        if dist_3d <= D_SAFE {
+            velocity = 0.0;
+            self.last_max_position = self.position_s; // freeze position
+        } else if dist_3d < D_SAFE * 3.0 {
+            let safety_factor = ((dist_3d - D_SAFE) / (D_SAFE * 2.0)).clamp(0.0, 1.0);
+            velocity *= safety_factor;
+            self.last_max_position = f32::MAX;
+        } else {
+            self.last_max_position = f32::MAX;
         }
 
         // 8. Broadcast state
@@ -181,19 +191,25 @@ impl<C: CommsInterface> RobotAgent<C> {
         min_ahead
     }
 
-    /// Maximum position we can advance to, given robots strictly ahead of us.
-    /// Returns f32::MAX if unconstrained.
-    fn max_position(&self, broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>) -> f32 {
-        let mut limit = f32::MAX;
+    /// Minimum 3D distance to any neighbour robot sharing planned edges.
+    /// Returns f32::MAX if no neighbours are close.
+    fn min_3d_distance_to_neighbours(&self, broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>) -> f32 {
+        let my_edges = self.planned_edge_ids();
+        let mut min_dist = f32::MAX;
         for bcast in broadcasts.iter() {
             if bcast.robot_id == self.robot_id { continue; }
-            // Only consider robots ahead of us (positive gap)
-            if bcast.position_s > self.position_s {
-                let cap = bcast.position_s - D_SAFE;
-                if cap < limit { limit = cap; }
-            }
+            // Only consider robots sharing edges
+            let shares = bcast.planned_edges.iter().any(|e| my_edges.contains(e))
+                || my_edges.contains(&bcast.current_edge);
+            if !shares { continue; }
+
+            let dx = self.pos_3d[0] - bcast.pos[0];
+            let dy = self.pos_3d[1] - bcast.pos[1];
+            let dz = self.pos_3d[2] - bcast.pos[2];
+            let dist = libm::sqrtf(dx * dx + dy * dy + dz * dz);
+            if dist < min_dist { min_dist = dist; }
         }
-        limit
+        min_dist
     }
 
     fn update_dynamics_v_nom(&mut self, map: &Map) {
@@ -340,7 +356,7 @@ impl<C: CommsInterface> RobotAgent<C> {
             current_edge: self.current_edge,
             position_s: self.position_s,
             velocity,
-            pos: [0.0; 3],
+            pos: self.pos_3d,
             planned_edges: self.planned_edge_ids_horizon(),
             belief_means: means,
             belief_vars: vars,
