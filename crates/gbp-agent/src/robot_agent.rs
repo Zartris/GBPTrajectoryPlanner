@@ -163,38 +163,39 @@ impl<C: CommsInterface> RobotAgent<C> {
         for bcast in broadcasts.iter() {
             if bcast.robot_id == self.robot_id { continue; }
 
-            // Check if trajectories share at least one edge
             let shares_edge = bcast.planned_edges.iter().any(|e| my_edges.contains(e))
                 || my_edges.contains(&bcast.current_edge);
+            if !shares_edge { continue; }
 
-            if shares_edge {
-                let _ = active_ids.push(bcast.robot_id);
+            let _ = active_ids.push(bcast.robot_id);
 
-                // Find which variable timestep k has the closest predicted position
-                // to the neighbour's current position. This connects the factor at the
-                // right "future time" — not just the current position.
-                let neighbour_s = bcast.position_s;
-                let mut best_k = 0usize;
-                let mut best_dist = f32::MAX;
-                for k in 0..MAX_HORIZON {
-                    let my_s_k = self.graph.variables[k].mean();
-                    let dist = (my_s_k - neighbour_s).abs();
-                    if dist < best_dist {
-                        best_dist = dist;
-                        best_k = k;
-                    }
+            // Find the timestep k where our predicted position is closest to theirs
+            let mut best_k = 0usize;
+            let mut best_dist = f32::MAX;
+            for k in 0..MAX_HORIZON {
+                let my_s_k = self.graph.variables[k].mean();
+                let their_s_k = if k < bcast.belief_means.len() {
+                    bcast.belief_means[k]
+                } else {
+                    bcast.position_s
+                };
+                let dist = (my_s_k - their_s_k).abs();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_k = k;
                 }
+            }
 
-                if !self.ir_set.contains(bcast.robot_id) {
-                    let factor = InterRobotFactor::new(best_k, D_SAFE, SIGMA_R);
-                    if let Ok(idx) = self.graph.add_factor(FactorKind::InterRobot(factor)) {
-                        self.ir_set.insert(bcast.robot_id, idx);
-                    }
-                } else if let Some(factor_idx) = self.ir_set.factor_idx(bcast.robot_id) {
-                    // Update which variable the existing factor connects to
-                    if let Some(FactorKind::InterRobot(irf)) = self.graph.get_factor_kind_mut(factor_idx) {
-                        irf.set_variable_index(best_k);
-                    }
+            if !self.ir_set.contains(bcast.robot_id) {
+                // Add new factor at the closest timestep
+                let factor = InterRobotFactor::new(best_k, D_SAFE, SIGMA_R);
+                if let Ok(idx) = self.graph.add_factor(FactorKind::InterRobot(factor)) {
+                    self.ir_set.insert(bcast.robot_id, idx);
+                }
+            } else if let Some(factor_idx) = self.ir_set.factor_idx(bcast.robot_id) {
+                // Update existing factor to connect at the closest timestep
+                if let Some(FactorKind::InterRobot(irf)) = self.graph.get_factor_kind_mut(factor_idx) {
+                    irf.set_variable_index(best_k);
                 }
             }
         }
@@ -219,14 +220,20 @@ impl<C: CommsInterface> RobotAgent<C> {
         for bcast in broadcasts.iter() {
             if bcast.robot_id == self.robot_id { continue; }
             if let Some(factor_idx) = self.ir_set.factor_idx(bcast.robot_id) {
-                // Read the mean of the variable this factor is connected to
+                // Read the variable index and its mean
                 let var_idx = self.graph.get_factor_kind(factor_idx)
                     .and_then(|fk| if let FactorKind::InterRobot(irf) = fk { Some(irf.variable_indices()[0]) } else { None })
                     .unwrap_or(0);
                 let s_a = self.graph.variables[var_idx].mean();
 
+                // Neighbour's predicted position at the same timestep
+                let s_b = if var_idx < bcast.belief_means.len() {
+                    bcast.belief_means[var_idx]
+                } else {
+                    bcast.position_s
+                };
+
                 if let Some(FactorKind::InterRobot(irf)) = self.graph.get_factor_kind_mut(factor_idx) {
-                    let s_b = bcast.position_s;
                     let diff = s_a - s_b;
                     let dist = diff.abs();
 
