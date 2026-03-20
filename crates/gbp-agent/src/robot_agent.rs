@@ -129,12 +129,33 @@ impl<C: CommsInterface> RobotAgent<C> {
         // 6. Extract commanded velocity from first dynamics factor (s_1 - s_0) / dt
         let s0 = self.graph.variables[0].mean();
         let s1 = self.graph.variables[1].mean();
-        let velocity = ((s1 - s0) / DT).max(0.0);
+        let mut velocity = ((s1 - s0) / DT).max(0.0);
 
-        // 7. Broadcast state
+        // 7. Safety velocity cap: if a neighbour is close, limit velocity to maintain clearance.
+        // This is a reactive safety layer on top of GBP — ensures d_safe is never violated
+        // even when GBP messages haven't fully converged.
+        let min_neighbour_dist = self.min_neighbour_distance(&broadcasts);
+        if min_neighbour_dist < D_SAFE * 3.0 {
+            // Scale velocity down as distance approaches d_safe
+            let safety_factor = ((min_neighbour_dist - D_SAFE) / (D_SAFE * 2.0)).clamp(0.0, 1.0);
+            velocity = velocity * safety_factor;
+        }
+
+        // 8. Broadcast state
         let _ = self.comms.broadcast(&self.make_broadcast(velocity));
 
         StepOutput { velocity, position_s: self.position_s, current_edge: self.current_edge }
+    }
+
+    /// Find the minimum distance to any neighbour robot (from broadcasts).
+    fn min_neighbour_distance(&self, broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>) -> f32 {
+        let mut min_dist = f32::MAX;
+        for bcast in broadcasts.iter() {
+            if bcast.robot_id == self.robot_id { continue; }
+            let dist = (self.position_s - bcast.position_s).abs();
+            if dist < min_dist { min_dist = dist; }
+        }
+        min_dist
     }
 
     fn update_dynamics_v_nom(&mut self, map: &Map) {

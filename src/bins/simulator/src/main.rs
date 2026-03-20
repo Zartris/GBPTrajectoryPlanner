@@ -176,6 +176,20 @@ async fn main() {
     tokio::spawn(agent_task(Arc::clone(&physics0), runner0, tx_state.clone(), 0));
     tokio::spawn(agent_task(Arc::clone(&physics1), runner1, tx_state.clone(), 1));
 
+    // Distance monitor (1 Hz)
+    let p0_mon = Arc::clone(&physics0);
+    let p1_mon = Arc::clone(&physics1);
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(1));
+        loop {
+            ticker.tick().await;
+            let s0 = p0_mon.lock().unwrap_or_else(|e| e.into_inner()).position_s;
+            let s1 = p1_mon.lock().unwrap_or_else(|e| e.into_inner()).position_s;
+            let dist = (s0 - s1).abs();
+            info!("DIST: s0={:.2} s1={:.2} gap={:.3}m (d_safe=0.3)", s0, s1, dist);
+        }
+    });
+
     let router = ws_server::build_router(tx_json, cmd_tx);
     let listener = tokio::net::TcpListener::bind(&args.bind).await
         .unwrap_or_else(|e| panic!("cannot bind {}: {}", args.bind, e));

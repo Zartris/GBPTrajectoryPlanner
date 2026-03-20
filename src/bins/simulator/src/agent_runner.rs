@@ -168,9 +168,11 @@ pub async fn agent_task(
         let out = {
             let mut r = runner.lock().unwrap_or_else(|e| e.into_inner());
             let out = r.step(global_s);
-            if out.active_factor_count > 0 {
-                tracing::info!("robot {}: {} active IR factors, v={:.3}", robot_id, out.active_factor_count, out.velocity);
-            }
+            tracing::debug!(
+                "robot {}: s={:.3} v={:.3} ir={} beliefs=[{:.2},{:.2},{:.2}]",
+                robot_id, global_s, out.velocity, out.active_factor_count,
+                out.belief_means[0], out.belief_means[1], out.belief_means[2]
+            );
             // Broadcast state after step so other robots can see us
             r.broadcast_state(out.current_edge, global_s);
             out
