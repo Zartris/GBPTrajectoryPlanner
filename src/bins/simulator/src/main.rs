@@ -8,15 +8,16 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use gbp_comms::RobotStateMsg;
 use physics::PhysicsState;
+use clap::Parser;
 
-struct Args { map_path: String, bind_addr: String }
-
-fn parse_args() -> Args {
-    let mut args = std::env::args().skip(1);
-    Args {
-        map_path: args.next().unwrap_or_else(|| "maps/test_loop_map.yaml".to_string()),
-        bind_addr: args.next().unwrap_or_else(|| "0.0.0.0:3000".to_string()),
-    }
+#[derive(Parser)]
+struct Args {
+    /// Path to map YAML file
+    #[arg(long)]
+    map: std::path::PathBuf,
+    /// Address to bind the WebSocket server
+    #[arg(long, default_value = "0.0.0.0:3000")]
+    bind: String,
 }
 
 #[tokio::main]
@@ -26,10 +27,10 @@ async fn main() {
             .add_directive("simulator=debug".parse().unwrap()))
         .init();
 
-    let args = parse_args();
-    info!("loading map from {}", args.map_path);
+    let args = Args::parse();
+    info!("loading map from {}", args.map.display());
 
-    let yaml = std::fs::read_to_string(&args.map_path)
+    let yaml = std::fs::read_to_string(&args.map)
         .unwrap_or_else(|e| panic!("cannot read map: {}", e));
     let map = gbp_map::parser::parse_yaml(&yaml)
         .unwrap_or_else(|e| panic!("map parse error: {}", e));
@@ -68,8 +69,8 @@ async fn main() {
     ));
 
     let router   = ws_server::build_router(tx_json);
-    let listener = tokio::net::TcpListener::bind(&args.bind_addr).await
-        .unwrap_or_else(|e| panic!("cannot bind {}: {}", args.bind_addr, e));
-    info!("WebSocket server listening on ws://{}/ws", args.bind_addr);
+    let listener = tokio::net::TcpListener::bind(&args.bind).await
+        .unwrap_or_else(|e| panic!("cannot bind {}: {}", args.bind, e));
+    info!("WebSocket server listening on ws://{}/ws", args.bind);
     axum::serve(listener, router).await.unwrap();
 }

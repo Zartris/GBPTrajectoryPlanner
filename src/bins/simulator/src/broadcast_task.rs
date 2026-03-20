@@ -38,7 +38,7 @@ pub async fn broadcast_task(
     loop {
         ticker.tick().await;
         let pos_s = {
-            let mut p = physics.lock().unwrap();
+            let mut p = physics.lock().unwrap_or_else(|e| e.into_inner());
             p.velocity = v_nom; // M1: constant nominal velocity
             p.position_s
         };

@@ -50,7 +50,7 @@ fn drain_ws_inbox(
     inbox: Res<WsInbox>,
     mut states: ResMut<RobotStates>,
 ) {
-    let mut q = inbox.0.lock().unwrap();
+    let mut q = inbox.0.lock().unwrap_or_else(|e| e.into_inner());
     while let Some(msg) = q.pop_front() {
         states.0.insert(msg.robot_id, msg);
     }
