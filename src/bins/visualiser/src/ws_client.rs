@@ -1,8 +1,7 @@
 //! Spawns a background tokio thread that connects to the simulator WebSocket
 //! and writes received RobotStateMsg values into WsInbox.
 
-const WS_INBOX_CAP: usize = 64;
-
+use crate::state::WS_INBOX_CAP;
 use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
 use futures_util::StreamExt;

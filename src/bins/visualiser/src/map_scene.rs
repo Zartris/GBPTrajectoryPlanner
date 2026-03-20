@@ -103,7 +103,7 @@ fn spawn_map_scene(
     }
 }
 
-/// Draw edge gizmo lines each frame (5px wide, bright yellow).
+/// Draw edge gizmo lines each frame (2px wide, bright yellow).
 fn draw_edge_gizmos(
     map: Res<MapRes>,
     mut gizmos: Gizmos,

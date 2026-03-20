@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
 use gbp_comms::RobotStateMsg;
 
+/// Maximum entries in the WS inbox queue before dropping oldest.
+pub const WS_INBOX_CAP: usize = 64;
+
 /// Bevy resource: queue of incoming messages from WebSocket thread.
 #[derive(Resource, Default)]
 pub struct WsInbox(pub Arc<Mutex<VecDeque<RobotStateMsg>>>);

@@ -19,11 +19,11 @@ impl PhysicsState {
         Self { position_s: 0.0, velocity: 0.0, edge_length }
     }
 
-    /// Integrate one timestep. Wraps around to 0 when reaching edge_length (demo loop).
+    /// Integrate one timestep. Wraps with remainder to maintain constant average speed.
     pub fn step(&mut self, dt: f32) {
         self.position_s += self.velocity * dt;
-        if self.position_s >= self.edge_length {
-            self.position_s = 0.0; // loop back to start
+        if self.edge_length > 0.0 && self.position_s >= self.edge_length {
+            self.position_s %= self.edge_length;
         }
         if self.position_s < 0.0 {
             self.position_s = 0.0;
@@ -58,8 +58,8 @@ mod tests {
     fn physics_wraps_at_edge_length() {
         let mut state = PhysicsState { position_s: 9.99, velocity: 5.0, edge_length: 10.0 };
         state.step(0.02);
-        // 9.99 + 5.0 * 0.02 = 10.09 -> wraps to 0.0
-        assert!((state.position_s - 0.0).abs() < 1e-6, "got {}", state.position_s);
+        // 9.99 + 5.0 * 0.02 = 10.09 -> wraps to 10.09 % 10.0 = 0.09
+        assert!((state.position_s - 0.09).abs() < 1e-4, "got {}", state.position_s);
     }
 
     #[test]
