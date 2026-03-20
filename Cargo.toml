@@ -6,6 +6,7 @@ members = [
     "crates/gbp-comms",
     "crates/gbp-agent",
     "src/bins/simulator",
+    "src/bins/visualiser",
 ]
 
 [workspace.dependencies]
@@ -20,3 +21,11 @@ serde_json = { version = "1" }
 tower      = { version = "0.4" }
 tracing    = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+bevy       = { version = "0.15", default-features = false, features = [
+    "bevy_asset", "bevy_core_pipeline",
+    "bevy_pbr", "bevy_render", "bevy_winit", "bevy_gizmos",
+    "tonemapping_luts", "default_font", "x11"
+] }
+bevy_egui          = { version = "0.30" }
+tokio-tungstenite  = { version = "0.24", features = ["native-tls"] }
+futures-util       = { version = "0.3" }
