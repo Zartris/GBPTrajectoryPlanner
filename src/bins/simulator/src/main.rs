@@ -59,8 +59,9 @@ async fn main() {
         loop {
             match rx_state.recv().await {
                 Ok(msg) => {
-                    if let Ok(json) = serde_json::to_string(&msg) {
-                        let _ = tx_json_relay.send(json);
+                    match serde_json::to_string(&msg) {
+                        Ok(json) => { let _ = tx_json_relay.send(json); }
+                        Err(e) => tracing::error!("relay: JSON serialize failed: {}", e),
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -82,6 +83,7 @@ async fn main() {
     let router   = ws_server::build_router(tx_json);
     let listener = tokio::net::TcpListener::bind(&args.bind).await
         .unwrap_or_else(|e| panic!("cannot bind {}: {}", args.bind, e));
-    info!("WebSocket server listening on ws://{}/ws", args.bind);
+    let client_host = if args.bind.starts_with("0.0.0.0") { args.bind.replacen("0.0.0.0", "localhost", 1) } else { args.bind.clone() };
+    info!("WebSocket server listening on ws://{}/ws (bind: {})", client_host, args.bind);
     axum::serve(listener, router).await.unwrap();
 }

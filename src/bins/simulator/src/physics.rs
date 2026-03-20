@@ -10,7 +10,7 @@ pub struct PhysicsState {
     pub position_s: f32,
     /// Current commanded velocity (m/s) -- written by broadcast task.
     pub velocity: f32,
-    /// Length of the current edge (m) -- robot stops at end.
+    /// Length of the current edge (m) -- position wraps to the start when reaching the end.
     pub edge_length: f32,
 }
 
