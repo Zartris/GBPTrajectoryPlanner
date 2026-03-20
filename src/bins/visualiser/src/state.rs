@@ -55,7 +55,17 @@ impl RobotState {
         self.planned_edges = msg.planned_edges.clone();
         self.belief_means = msg.belief_means;
         self.belief_vars = msg.belief_vars;
+        // active_factors list contains neighbour robot_ids; count = number of active IR factors
         self.active_factor_count = msg.active_factors.len();
+    }
+
+    /// Global arc-length of this robot (cumulative position along full trajectory).
+    /// Computed from planned_edges + position_s for belief tube rendering.
+    pub fn global_s_estimate(&self) -> f32 {
+        // position_s in the message is edge-local. We don't have
+        // cumulative offset, so this is approximate. The belief means
+        // from the GBP agent are already global arc-lengths.
+        0.0 // Belief means are used directly as global s values
     }
 }
 

@@ -81,19 +81,45 @@ pub fn belief_tube_radius(variance: f32) -> f32 {
     variance.max(0.0).sqrt()
 }
 
-/// Evaluate 3D world positions for a set of arc-length belief means on an edge.
-/// Applies map->Bevy coordinate transform.
-pub fn belief_tube_positions(
+/// Map a global arc-length s to a 3D world position by walking the planned edges.
+/// Returns Bevy coordinates (map x,y,z -> bevy x,z,-y).
+fn global_s_to_world(map: &Map, planned_edges: &[EdgeId], global_s: f32) -> [f32; 3] {
+    let mut cumulative = 0.0;
+    for &eid in planned_edges {
+        if let Some(idx) = map.edge_index(eid) {
+            let len = map.edges[idx].geometry.length();
+            if global_s < cumulative + len {
+                let local_s = global_s - cumulative;
+                return match map.eval_position(eid, local_s) {
+                    Some(p) => [p[0], p[2], -p[1]],
+                    None => [0.0, 0.0, 0.0],
+                };
+            }
+            cumulative += len;
+        }
+    }
+    // Past end — evaluate at last edge's end
+    if let Some(&last_eid) = planned_edges.last() {
+        if let Some(idx) = map.edge_index(last_eid) {
+            let len = map.edges[idx].geometry.length();
+            return match map.eval_position(last_eid, len) {
+                Some(p) => [p[0], p[2], -p[1]],
+                None => [0.0, 0.0, 0.0],
+            };
+        }
+    }
+    [0.0, 0.0, 0.0]
+}
+
+/// Evaluate 3D world positions for belief means (global arc-lengths) along a trajectory.
+pub fn belief_tube_positions_trajectory(
     map: &Map,
-    edge_id: EdgeId,
+    planned_edges: &[EdgeId],
     means: &[f32],
 ) -> heapless::Vec<[f32; 3], MAX_HORIZON> {
     let mut pts = heapless::Vec::new();
     for &s in means.iter() {
-        match map.eval_position(edge_id, s) {
-            Some(p) => { let _ = pts.push([p[0], p[2], -p[1]]); }
-            None => { let _ = pts.push([0.0, 0.0, 0.0]); }
-        }
+        let _ = pts.push(global_s_to_world(map, planned_edges, s));
     }
     pts
 }
@@ -195,24 +221,35 @@ fn draw_planned_path(
     }
 }
 
-/// Draw belief tube gizmos: circles at each belief mean position, radius = sqrt(variance).
+/// Draw belief variable positions as dots + uncertainty circles along the planned trajectory.
 fn draw_belief_tubes(
     map: Res<MapRes>,
     states: Res<RobotStates>,
     mut gizmos: Gizmos,
 ) {
-    for state in states.0.values() {
-        let pts = belief_tube_positions(&map.0, state.current_edge, &state.belief_means);
+    for (robot_id, state) in &states.0 {
+        let (r, g, b) = ROBOT_COLORS.get(*robot_id as usize).copied().unwrap_or((0.5, 0.5, 0.5));
+        let edge_ids: Vec<EdgeId> = state.planned_edges.iter().copied().collect();
+        let pts = belief_tube_positions_trajectory(&map.0, &edge_ids, &state.belief_means);
+        let up = Vec3::new(0.0, 0.15, 0.0); // offset above the track
+
         for (i, &center) in pts.iter().enumerate() {
-            let r = belief_tube_radius(state.belief_vars[i]);
-            if r > 0.001 {
+            let pos = Vec3::from(center) + up;
+
+            // Draw a small dot at each variable's mean position
+            gizmos.sphere(
+                Isometry3d::from_translation(pos),
+                0.05,
+                Color::srgb(r, g, b),
+            );
+
+            // Draw uncertainty circle (radius = sqrt(variance))
+            let radius = belief_tube_radius(state.belief_vars[i]);
+            if radius > 0.01 && radius < 5.0 {
                 gizmos.circle(
-                    Isometry3d::new(
-                        Vec3::from(center),
-                        Quat::IDENTITY,
-                    ),
-                    r,
-                    Color::srgba(1.0, 0.8, 0.2, 0.5),
+                    Isometry3d::new(pos, Quat::IDENTITY),
+                    radius.min(1.0),
+                    Color::srgba(r, g, b, 0.4),
                 );
             }
         }

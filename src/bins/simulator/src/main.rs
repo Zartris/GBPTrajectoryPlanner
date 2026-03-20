@@ -112,11 +112,11 @@ async fn main() {
     info!("Robot 1: total trajectory length: {:.2}m", total_length1);
 
     let physics0 = Arc::new(Mutex::new(PhysicsState::new(total_length0)));
-    // Robot 0 starts at s=2.0 (ahead)
-    physics0.lock().unwrap().position_s = 2.0;
+    // Robot 0 starts at s=1.0 (slightly ahead)
+    physics0.lock().unwrap().position_s = 1.0;
 
     let physics1 = Arc::new(Mutex::new(PhysicsState::new(total_length1)));
-    // Robot 1 starts at s=0.0 (behind)
+    // Robot 1 starts at s=0.0 (close behind — should trigger GBP interaction)
 
     // Relay: RobotStateMsg -> JSON
     let tx_json_relay = tx_json.clone();

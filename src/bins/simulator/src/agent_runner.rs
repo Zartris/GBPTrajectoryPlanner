@@ -187,7 +187,16 @@ pub async fn agent_task(
             belief_means: out.belief_means,
             belief_vars: out.belief_vars,
             planned_edges,
-            active_factors: HVec::new(),
+            active_factors: {
+                // Report which robots we have active inter-robot factors with
+                let mut af = HVec::new();
+                if out.active_factor_count > 0 {
+                    // For now, mark robot 0 ↔ 1 relationship
+                    let other = if robot_id == 0 { 1 } else { 0 };
+                    let _ = af.push(other);
+                }
+                af
+            },
         };
         let _ = tx.send(msg);
     }
