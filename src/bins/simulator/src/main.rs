@@ -68,29 +68,37 @@ async fn main() {
 
     // Determine start/goal per robot based on scenario
     let (start0, goal0, start1, goal1) = if args.scenario == "merge" {
-        // Find an alternate start node whose A* route differs initially but shares edges later
-        let mut alt_start = default_start;
-        let default_path = gbp_map::astar::astar(&map_arc, default_start, default_goal);
-        for node in map_arc.nodes.iter() {
-            if node.id == default_start { continue; }
-            if let Some(alt_path) = gbp_map::astar::astar(&map_arc, node.id, default_goal) {
-                if let Some(ref dp) = default_path {
-                    // Different first edge but shares at least one later edge
-                    if !alt_path.is_empty() && !dp.is_empty()
-                        && alt_path[0] != dp[0]
-                        && alt_path.iter().any(|e| dp.contains(e))
-                    {
-                        alt_start = node.id;
-                        info!("merge scenario: alternate start {:?} (default {:?})", alt_start, default_start);
-                        break;
+        // P004 = NodeId(3), P033 = NodeId(30) — two different entry points into the loop
+        let s0 = NodeId(3);  // P004
+        let s1 = NodeId(30); // P033
+        // Verify both can reach the goal
+        let g = default_goal;
+        if gbp_map::astar::astar(&map_arc, s0, g).is_some()
+            && gbp_map::astar::astar(&map_arc, s1, g).is_some()
+        {
+            info!("merge scenario: robot 0 starts at P004 (NodeId(3)), robot 1 at P033 (NodeId(30))");
+            (s0, g, s1, g)
+        } else {
+            info!("merge scenario: P004/P033 can't reach goal, falling back to auto-discovery");
+            // Fallback: auto-discover an alternate start
+            let mut alt_start = default_start;
+            let default_path = gbp_map::astar::astar(&map_arc, default_start, default_goal);
+            for node in map_arc.nodes.iter() {
+                if node.id == default_start { continue; }
+                if let Some(alt_path) = gbp_map::astar::astar(&map_arc, node.id, default_goal) {
+                    if let Some(ref dp) = default_path {
+                        if !alt_path.is_empty() && !dp.is_empty()
+                            && alt_path[0] != dp[0]
+                            && alt_path.iter().any(|e| dp.contains(e))
+                        {
+                            alt_start = node.id;
+                            break;
+                        }
                     }
                 }
             }
+            (default_start, default_goal, alt_start, default_goal)
         }
-        if alt_start == default_start {
-            info!("merge scenario: no alternate start found, falling back to follow");
-        }
-        (default_start, default_goal, alt_start, default_goal)
     } else {
         (default_start, default_goal, default_start, default_goal)
     };
