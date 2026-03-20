@@ -731,3 +731,7 @@ git tag m5-complete
 ```
 
 ---
+
+## Deferred from M1 PR review (must address in M5)
+
+- [ ] **Precompute NURBS edge polylines**: `draw_edge_gizmos()` recomputes `eval_point()` 32× per edge per frame. With N robots and a full map this becomes a CPU bottleneck. Cache sampled polylines in a `Res<EdgePolylines>` at startup and draw from cache each frame.
