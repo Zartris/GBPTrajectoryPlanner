@@ -35,6 +35,8 @@ pub struct RobotAgent<C: CommsInterface> {
     ir_set: InterRobotFactorSet,
     position_s:   f32,
     current_edge: EdgeId,
+    /// Cached last-known broadcasts — avoids dropping IR factors on empty ticks.
+    last_broadcasts: Vec<RobotBroadcast, MAX_NEIGHBOURS>,
     /// Maximum allowed position (from safety cap). f32::MAX if unconstrained.
     last_max_position: f32,
 }
@@ -66,6 +68,7 @@ impl<C: CommsInterface> RobotAgent<C> {
             ir_set: InterRobotFactorSet::new(),
             position_s: 0.0,
             current_edge: EdgeId(0),
+            last_broadcasts: Vec::new(),
             last_max_position: f32::MAX,
         }
     }
@@ -118,8 +121,13 @@ impl<C: CommsInterface> RobotAgent<C> {
         self.graph.variables[0].eta = self.graph.variables[0].prior_eta;
         self.graph.variables[0].lambda = self.graph.variables[0].prior_lambda;
 
-        // 1. Receive broadcasts from neighbours
-        let broadcasts = self.comms.receive_broadcasts();
+        // 1. Receive broadcasts from neighbours. If none arrived this tick,
+        // use the cached version so IR factors don't flicker on/off.
+        let fresh = self.comms.receive_broadcasts();
+        if !fresh.is_empty() {
+            self.last_broadcasts = fresh;
+        }
+        let broadcasts = self.last_broadcasts.clone();
 
         // 2. Update inter-robot factors (add/remove as planned edges change)
         self.update_interrobot_factors(&broadcasts, map);
