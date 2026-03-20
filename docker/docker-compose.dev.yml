@@ -28,6 +28,10 @@ services:
       - ${HOME}/.gitconfig:/home/${USER}/.gitconfig:ro
       # gh CLI auth — auth once on host with `gh auth login`, persists across rebuilds
       - ${HOME}/.config/gh:/home/${USER}/.config/gh
+      # X11 forwarding — lets Bevy/visualiser open a window on the host display
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
     stdin_open: true
     tty: true
     working_dir: /repo
