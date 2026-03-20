@@ -99,6 +99,17 @@ async fn main() {
             }
             (default_start, default_goal, alt_start, default_goal)
         }
+    } else if args.scenario == "endcollision" {
+        // P025 → P012: single edge, both robots same route, robot 1 spawns 1s late
+        let s = NodeId(22); // P025
+        let g = NodeId(11); // P012
+        if gbp_map::astar::astar(&map_arc, s, g).is_some() {
+            info!("endcollision scenario: both start at P025 (NodeId(22)), goal P012 (NodeId(11))");
+            (s, g, s, g)
+        } else {
+            info!("endcollision scenario: P025->P012 has no path, falling back to default");
+            (default_start, default_goal, default_start, default_goal)
+        }
     } else {
         (default_start, default_goal, default_start, default_goal)
     };
@@ -151,7 +162,8 @@ async fn main() {
     };
 
     let physics0 = Arc::new(Mutex::new(PhysicsState::new(total_length0)));
-    if start0 == start1 {
+    let delayed_start = args.scenario == "endcollision";
+    if start0 == start1 && !delayed_start {
         physics0.lock().unwrap().position_s = 0.2; // slight head start in follow mode
     }
     // When both robots share the same goal, cap robot 1's total_length so it stops
@@ -224,9 +236,21 @@ async fn main() {
     let p1_mon = Arc::clone(&physics1);
 
     tokio::spawn(physics::physics_task(Arc::clone(&physics0)));
-    tokio::spawn(physics::physics_task(Arc::clone(&physics1)));
     tokio::spawn(agent_task(Arc::clone(&physics0), runner0, tx_state.clone(), 0));
-    tokio::spawn(agent_task(Arc::clone(&physics1), runner1, tx_state.clone(), 1));
+
+    // Robot 1: delay spawn by 1s in endcollision scenario
+    let physics1_clone = Arc::clone(&physics1);
+    let runner1_arc = runner1;
+    let tx1 = tx_state.clone();
+    tokio::spawn(async move {
+        if delayed_start {
+            info!("endcollision: robot 1 spawns in 1 second...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            info!("endcollision: robot 1 spawning now");
+        }
+        tokio::spawn(physics::physics_task(Arc::clone(&physics1_clone)));
+        agent_task(physics1_clone, runner1_arc, tx1, 1).await;
+    });
     let map_mon = Arc::clone(&map_arc);
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(1));
