@@ -53,7 +53,7 @@ async fn handle_socket(mut socket: WebSocket, tx: WsTx, cmd_tx: mpsc::Sender<Str
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(cmd))) => {
-                        let _ = cmd_tx.send(cmd.to_string()).await;
+                        let _ = cmd_tx.send(cmd).await;
                     }
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Err(_)) => break,

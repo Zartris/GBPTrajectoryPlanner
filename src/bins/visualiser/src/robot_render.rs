@@ -249,8 +249,8 @@ mod tests {
     }
 
     #[test]
-    fn planned_path_gizmo_samples_is_8() {
-        assert_eq!(PLANNED_PATH_GIZMO_SAMPLES, 8);
+    fn dash_length_is_positive() {
+        assert!(DASH_LENGTH > 0.0);
     }
 
     #[test]

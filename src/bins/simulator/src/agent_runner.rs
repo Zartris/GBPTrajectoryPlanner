@@ -128,14 +128,7 @@ pub async fn agent_task(
 
         physics.lock().unwrap_or_else(|e| e.into_inner()).velocity = out.velocity;
 
-        let planned_edges = {
-            let snap = runner.lock().unwrap_or_else(|e| e.into_inner()).planned_edge_ids();
-            let mut pe: HVec<EdgeId, MAX_HORIZON> = HVec::new();
-            for &eid in snap.iter().take(MAX_HORIZON) {
-                let _ = pe.push(eid);
-            }
-            pe
-        };
+        let planned_edges = runner.lock().unwrap_or_else(|e| e.into_inner()).planned_edge_ids();
 
         let msg = RobotStateMsg {
             robot_id: 0,
