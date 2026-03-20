@@ -8,34 +8,33 @@ use crate::state::RobotStates;
 #[derive(Resource, Default)]
 pub struct SimPaused(pub bool);
 
-/// Tracks the last WS message timestamp for backend Hz calculation.
+/// Tracks backend message rate by counting messages per second.
 #[derive(Resource)]
 pub struct BackendStats {
-    pub last_msg_time: std::time::Instant,
     pub msg_hz: f32,
-    /// Exponential moving average smoothing
-    pub ema_alpha: f32,
+    msg_count: u32,
+    window_start: std::time::Instant,
 }
 
 impl Default for BackendStats {
     fn default() -> Self {
         Self {
-            last_msg_time: std::time::Instant::now(),
             msg_hz: 0.0,
-            ema_alpha: 0.1,
+            msg_count: 0,
+            window_start: std::time::Instant::now(),
         }
     }
 }
 
 impl BackendStats {
     pub fn record_message(&mut self) {
-        let now = std::time::Instant::now();
-        let dt = now.duration_since(self.last_msg_time).as_secs_f32();
-        if dt > 0.001 {
-            let instant_hz = 1.0 / dt;
-            self.msg_hz = self.msg_hz * (1.0 - self.ema_alpha) + instant_hz * self.ema_alpha;
+        self.msg_count += 1;
+        let elapsed = self.window_start.elapsed().as_secs_f32();
+        if elapsed >= 1.0 {
+            self.msg_hz = self.msg_count as f32 / elapsed;
+            self.msg_count = 0;
+            self.window_start = std::time::Instant::now();
         }
-        self.last_msg_time = now;
     }
 }
 
