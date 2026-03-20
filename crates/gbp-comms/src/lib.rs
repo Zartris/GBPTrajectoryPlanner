@@ -59,6 +59,9 @@ pub struct RobotStateMsg {
     pub belief_vars:    [f32; MAX_HORIZON],
     pub planned_edges:  Vec<EdgeId, MAX_PATH_EDGES>,
     pub active_factors: Vec<RobotId, MAX_NEIGHBOURS>,
+    /// Total number of active inter-robot factors (can exceed active_factors.len()
+    /// since active_factors only lists neighbour IDs, not per-variable factor count).
+    pub ir_factor_count: u16,
 }
 
 /// Visualiser -> Bridge/Simulator

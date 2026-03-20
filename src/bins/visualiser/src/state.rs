@@ -55,8 +55,7 @@ impl RobotState {
         self.planned_edges = msg.planned_edges.clone();
         self.belief_means = msg.belief_means;
         self.belief_vars = msg.belief_vars;
-        // active_factors list contains neighbour robot_ids; count = number of active IR factors
-        self.active_factor_count = msg.active_factors.len();
+        self.active_factor_count = msg.ir_factor_count as usize;
     }
 
     /// Global arc-length of this robot (cumulative position along full trajectory).

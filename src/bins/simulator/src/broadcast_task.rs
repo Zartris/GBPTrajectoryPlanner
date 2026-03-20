@@ -25,6 +25,7 @@ pub fn build_robot_state_msg(edge_id: EdgeId, position_s: f32, v_nom: f32) -> Ro
         belief_vars: [0.0; MAX_HORIZON],
         planned_edges: heapless::Vec::new(),
         active_factors: heapless::Vec::new(),
+            ir_factor_count: 0,
     }
 }
 

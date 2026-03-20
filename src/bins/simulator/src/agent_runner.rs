@@ -203,11 +203,10 @@ pub async fn agent_task(
             belief_means: out.belief_means,
             belief_vars: out.belief_vars,
             planned_edges,
+            ir_factor_count: out.active_factor_count as u16,
             active_factors: {
-                // Report which robots we have active inter-robot factors with
                 let mut af = HVec::new();
                 if out.active_factor_count > 0 {
-                    // For now, mark robot 0 ↔ 1 relationship
                     let other = if robot_id == 0 { 1 } else { 0 };
                     let _ = af.push(other);
                 }
