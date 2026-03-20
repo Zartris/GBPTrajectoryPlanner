@@ -1,5 +1,5 @@
 use gbp_comms::{CommsInterface, ObservationUpdate, RobotBroadcast, RobotId};
-use gbp_core::{FactorGraph, FactorKind, DynamicsFactor, InterRobotFactor};
+use gbp_core::{Factor, FactorGraph, FactorKind, DynamicsFactor, InterRobotFactor};
 use gbp_map::{Map, MAX_HORIZON, MAX_NEIGHBOURS};
 use gbp_map::map::EdgeId;
 use heapless::Vec;
@@ -157,34 +157,49 @@ impl<C: CommsInterface> RobotAgent<C> {
         broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>,
         _map: &Map,
     ) {
-        // Determine which robots share at least one edge with our planned trajectory
         let my_edges = self.planned_edge_ids();
-
-        // Track which robot IDs are still relevant (share an edge)
         let mut active_ids: Vec<RobotId, MAX_NEIGHBOURS> = Vec::new();
 
         for bcast in broadcasts.iter() {
             if bcast.robot_id == self.robot_id { continue; }
 
-            // Check if any of bcast's planned_edges overlap with ours
+            // Check if trajectories share at least one edge
             let shares_edge = bcast.planned_edges.iter().any(|e| my_edges.contains(e))
                 || my_edges.contains(&bcast.current_edge);
 
             if shares_edge {
                 let _ = active_ids.push(bcast.robot_id);
 
-                // If we don't already have a factor for this robot, add one
+                // Find which variable timestep k has the closest predicted position
+                // to the neighbour's current position. This connects the factor at the
+                // right "future time" — not just the current position.
+                let neighbour_s = bcast.position_s;
+                let mut best_k = 0usize;
+                let mut best_dist = f32::MAX;
+                for k in 0..MAX_HORIZON {
+                    let my_s_k = self.graph.variables[k].mean();
+                    let dist = (my_s_k - neighbour_s).abs();
+                    if dist < best_dist {
+                        best_dist = dist;
+                        best_k = k;
+                    }
+                }
+
                 if !self.ir_set.contains(bcast.robot_id) {
-                    // Add an inter-robot factor at variable index 0 (closest timestep)
-                    let factor = InterRobotFactor::new(0, D_SAFE, SIGMA_R);
+                    let factor = InterRobotFactor::new(best_k, D_SAFE, SIGMA_R);
                     if let Ok(idx) = self.graph.add_factor(FactorKind::InterRobot(factor)) {
                         self.ir_set.insert(bcast.robot_id, idx);
+                    }
+                } else if let Some(factor_idx) = self.ir_set.factor_idx(bcast.robot_id) {
+                    // Update which variable the existing factor connects to
+                    if let Some(FactorKind::InterRobot(irf)) = self.graph.get_factor_kind_mut(factor_idx) {
+                        irf.set_variable_index(best_k);
                     }
                 }
             }
         }
 
-        // Remove factors for robots that are no longer sharing edges
+        // Remove factors for robots no longer sharing edges
         let mut to_remove: Vec<RobotId, MAX_NEIGHBOURS> = Vec::new();
         for &(rid, _) in self.ir_set.iter() {
             if !active_ids.contains(&rid) {
@@ -201,12 +216,15 @@ impl<C: CommsInterface> RobotAgent<C> {
         broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>,
         _map: &Map,
     ) {
-        // Read variable[0] mean before mutably borrowing the graph for factor updates
-        let s_a = self.graph.variables[0].mean();
-
         for bcast in broadcasts.iter() {
             if bcast.robot_id == self.robot_id { continue; }
             if let Some(factor_idx) = self.ir_set.factor_idx(bcast.robot_id) {
+                // Read the mean of the variable this factor is connected to
+                let var_idx = self.graph.get_factor_kind(factor_idx)
+                    .and_then(|fk| if let FactorKind::InterRobot(irf) = fk { Some(irf.variable_indices()[0]) } else { None })
+                    .unwrap_or(0);
+                let s_a = self.graph.variables[var_idx].mean();
+
                 if let Some(FactorKind::InterRobot(irf)) = self.graph.get_factor_kind_mut(factor_idx) {
                     let s_b = bcast.position_s;
                     let diff = s_a - s_b;
