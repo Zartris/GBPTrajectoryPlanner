@@ -55,11 +55,11 @@ mod tests {
     }
 
     #[test]
-    fn physics_clamps_to_edge_length() {
+    fn physics_wraps_at_edge_length() {
         let mut state = PhysicsState { position_s: 9.99, velocity: 5.0, edge_length: 10.0 };
         state.step(0.02);
-        // 9.99 + 5.0 * 0.02 = 10.09 -> clamped to 10.0
-        assert!((state.position_s - 10.0).abs() < 1e-6, "got {}", state.position_s);
+        // 9.99 + 5.0 * 0.02 = 10.09 -> wraps to 0.0
+        assert!((state.position_s - 0.0).abs() < 1e-6, "got {}", state.position_s);
     }
 
     #[test]
