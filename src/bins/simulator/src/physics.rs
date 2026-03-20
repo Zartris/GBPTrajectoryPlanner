@@ -31,7 +31,7 @@ pub async fn physics_task(state: Arc<Mutex<PhysicsState>>) {
     let mut ticker = interval(Duration::from_millis(20)); // 50 Hz
     loop {
         ticker.tick().await;
-        let mut s = state.lock().unwrap();
+        let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
         s.step(DT);
         debug!("physics: s={:.4}", s.position_s);
     }

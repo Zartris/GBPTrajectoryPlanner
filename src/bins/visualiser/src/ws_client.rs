@@ -29,7 +29,9 @@ pub fn spawn_ws_client(
                                 Ok(Message::Text(json)) => {
                                     match serde_json::from_str::<RobotStateMsg>(&json) {
                                         Ok(state) => {
-                                            inbox.lock().unwrap().push_back(state);
+                                            let mut q = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                                            if q.len() >= 64 { q.pop_front(); }
+                                            q.push_back(state);
                                         }
                                         Err(e) => warn!("bad msg: {}", e),
                                     }
