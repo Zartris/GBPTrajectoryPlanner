@@ -1,4 +1,5 @@
 // src/bins/simulator/src/physics.rs
+use gbp_map::map::EdgeId;
 use std::sync::{Arc, Mutex};
 use tokio::time::{interval, Duration};
 use tracing::debug;
@@ -8,26 +9,44 @@ use tracing::debug;
 pub struct PhysicsState {
     /// Arc-length position along the current edge (m).
     pub position_s: f32,
-    /// Current commanded velocity (m/s) -- written by broadcast task.
+    /// Current commanded velocity (m/s) -- written by agent task.
     pub velocity: f32,
-    /// Length of the current edge (m) -- position wraps to the start when reaching the end.
+    /// Length of the current edge (m).
     pub edge_length: f32,
+    /// Which edge the robot is currently on.
+    pub current_edge: EdgeId,
+    /// Set to true when position_s reaches edge_length; cleared on transition_to().
+    pub edge_done: bool,
 }
 
 impl PhysicsState {
-    pub fn new(edge_length: f32) -> Self {
-        Self { position_s: 0.0, velocity: 0.0, edge_length }
+    pub fn new(edge_id: EdgeId, edge_length: f32) -> Self {
+        Self {
+            position_s: 0.0,
+            velocity: 0.0,
+            edge_length,
+            current_edge: edge_id,
+            edge_done: false,
+        }
     }
 
-    /// Integrate one timestep. Wraps with remainder to maintain constant average speed.
+    /// Integrate one timestep. Clamps at edge_length and sets edge_done.
     pub fn step(&mut self, dt: f32) {
-        self.position_s += self.velocity * dt;
-        if self.edge_length > 0.0 && self.position_s >= self.edge_length {
-            self.position_s %= self.edge_length;
+        let new_s = self.position_s + self.velocity * dt;
+        if new_s >= self.edge_length {
+            self.position_s = self.edge_length;
+            self.edge_done = true;
+        } else {
+            self.position_s = new_s.max(0.0);
         }
-        if self.position_s < 0.0 {
-            self.position_s = 0.0;
-        }
+    }
+
+    /// Advance to the next edge, resetting position to 0.
+    pub fn transition_to(&mut self, next_edge: EdgeId, next_length: f32) {
+        self.current_edge = next_edge;
+        self.edge_length = next_length;
+        self.position_s = 0.0;
+        self.edge_done = false;
     }
 }
 
@@ -39,7 +58,7 @@ pub async fn physics_task(state: Arc<Mutex<PhysicsState>>) {
         ticker.tick().await;
         let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
         s.step(DT);
-        debug!("physics: s={:.4}", s.position_s);
+        debug!("physics: s={:.4} edge={:?}", s.position_s, s.current_edge);
     }
 }
 
@@ -49,23 +68,79 @@ mod tests {
 
     #[test]
     fn physics_advances_s_by_v_times_dt() {
-        let mut state = PhysicsState { position_s: 0.0, velocity: 2.0, edge_length: 10.0 };
+        let mut state = PhysicsState {
+            position_s: 0.0,
+            velocity: 2.0,
+            edge_length: 10.0,
+            current_edge: EdgeId(0),
+            edge_done: false,
+        };
         state.step(0.02); // 50 Hz -> dt = 0.02 s
         assert!((state.position_s - 0.04).abs() < 1e-6, "got {}", state.position_s);
     }
 
     #[test]
-    fn physics_wraps_at_edge_length() {
-        let mut state = PhysicsState { position_s: 9.99, velocity: 5.0, edge_length: 10.0 };
+    fn physics_clamps_at_edge_length() {
+        let mut state = PhysicsState {
+            position_s: 9.99,
+            velocity: 5.0,
+            edge_length: 10.0,
+            current_edge: EdgeId(0),
+            edge_done: false,
+        };
         state.step(0.02);
-        // 9.99 + 5.0 * 0.02 = 10.09 -> wraps to 10.09 % 10.0 = 0.09
-        assert!((state.position_s - 0.09).abs() < 1e-4, "got {}", state.position_s);
+        // 9.99 + 5.0 * 0.02 = 10.09 -> clamped to 10.0
+        assert!(
+            (state.position_s - 10.0).abs() < 1e-4,
+            "got {}",
+            state.position_s
+        );
+        assert!(state.edge_done);
     }
 
     #[test]
     fn physics_zero_velocity_stays_put() {
-        let mut state = PhysicsState { position_s: 3.0, velocity: 0.0, edge_length: 10.0 };
+        let mut state = PhysicsState {
+            position_s: 3.0,
+            velocity: 0.0,
+            edge_length: 10.0,
+            current_edge: EdgeId(0),
+            edge_done: false,
+        };
         state.step(0.02);
         assert!((state.position_s - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn physics_triggers_edge_transition_when_at_end() {
+        let mut state = PhysicsState {
+            position_s: 9.95,
+            velocity: 2.0,
+            edge_length: 10.0,
+            current_edge: EdgeId(0),
+            edge_done: false,
+        };
+        state.step(0.02);
+        // 9.95 + 2.0 * 0.02 = 9.99 -- not yet at 10.0
+        assert!(!state.edge_done);
+        state.step(0.02);
+        // 9.99 + 2.0 * 0.02 = 10.03 -> clamped to 10.0 -> edge_done = true
+        assert!(state.edge_done);
+    }
+
+    #[test]
+    fn physics_resets_edge_done_on_new_edge() {
+        let mut state = PhysicsState {
+            position_s: 10.0,
+            velocity: 0.0,
+            edge_length: 10.0,
+            current_edge: EdgeId(0),
+            edge_done: true,
+        };
+        state.transition_to(EdgeId(1), 8.0);
+        assert_eq!(state.current_edge, EdgeId(1));
+        assert_eq!(state.edge_length, 8.0);
+        assert!((state.position_s).abs() < 1e-6);
+        assert!(!state.edge_done);
     }
 }

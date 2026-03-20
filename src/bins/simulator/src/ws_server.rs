@@ -6,40 +6,60 @@ use axum::{
     Router,
 };
 use axum::extract::ws::{Message, WebSocket};
-use tokio::sync::broadcast;
-use futures_util::SinkExt;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{info, warn};
 
 pub type WsTx = broadcast::Sender<String>;
 
+#[derive(Clone)]
+struct AppState {
+    tx: WsTx,
+    cmd_tx: mpsc::Sender<String>,
+}
+
 /// Build the axum router. Separated from bind so it can be tested.
-pub fn build_router(tx: WsTx) -> Router {
+pub fn build_router(tx: WsTx, cmd_tx: mpsc::Sender<String>) -> Router {
+    let state = AppState { tx, cmd_tx };
     Router::new()
         .route("/ws", get(ws_handler))
-        .with_state(tx)
+        .with_state(state)
 }
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
-    State(tx): State<WsTx>,
+    State(state): State<AppState>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_socket(socket, tx))
+    ws.on_upgrade(move |socket| handle_socket(socket, state.tx, state.cmd_tx))
 }
 
-async fn handle_socket(mut socket: WebSocket, tx: WsTx) {
+async fn handle_socket(mut socket: WebSocket, tx: WsTx, cmd_tx: mpsc::Sender<String>) {
     let mut rx = tx.subscribe();
     info!("visualiser connected");
     loop {
-        match rx.recv().await {
-            Ok(json) => {
-                if socket.send(Message::Text(json.into())).await.is_err() {
-                    break;
+        tokio::select! {
+            result = rx.recv() => {
+                match result {
+                    Ok(json) => {
+                        if socket.send(Message::Text(json.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("ws lagged {} frames", n);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
-            Err(broadcast::error::RecvError::Lagged(n)) => {
-                warn!("ws lagged {} frames", n);
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Text(cmd))) => {
+                        let _ = cmd_tx.send(cmd.to_string()).await;
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Err(_)) => break,
+                    _ => {}
+                }
             }
-            Err(broadcast::error::RecvError::Closed) => break,
         }
     }
     info!("visualiser disconnected");
@@ -48,12 +68,13 @@ async fn handle_socket(mut socket: WebSocket, tx: WsTx) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::broadcast;
+    use tokio::sync::{broadcast, mpsc};
 
     #[tokio::test]
     async fn ws_router_builds_without_panic() {
         let (tx, _rx) = broadcast::channel::<String>(16);
+        let (cmd_tx, _cmd_rx) = mpsc::channel::<String>(8);
         // Should not panic
-        let _router = build_router(tx);
+        let _router = build_router(tx, cmd_tx);
     }
 }
