@@ -36,12 +36,12 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "GBP Trajectory Planner".into(),
-                resolution: (1280.0, 720.0).into(),
+                resolution: (1280u32, 720u32).into(),
                 ..default()
             }),
             ..default()
         }))
-        .add_plugins(EguiPlugin)
+        .add_plugins(EguiPlugin::default())
         .insert_resource(MapRes(map))
         .insert_resource(RobotStates::default())
         .insert_resource(WsInbox(inbox))
