@@ -18,6 +18,9 @@ const DT: f32 = 0.1; // seconds per GBP timestep
 const D_SAFE: f32 = 0.3; // minimum clearance (m)
 const SIGMA_R: f32 = 0.15; // inter-robot factor noise — stronger than dynamics (sigma_dyn=0.5)
                             // precision = 1/0.15^2 ≈ 44 vs dynamics precision = 1/0.5^2 = 4
+const MAX_ACCEL: f32 = 2.5; // m/s² — max acceleration/deceleration
+const MAX_JERK: f32 = 5.0;  // m/s³ — max rate of acceleration change
+const AGENT_DT: f32 = 0.02; // 50 Hz agent tick (for jerk/accel rate limiting)
 
 /// Output of one agent step.
 pub struct StepOutput {
@@ -38,6 +41,10 @@ pub struct RobotAgent<C: CommsInterface> {
     current_edge: EdgeId,
     /// 3D world position (updated each step from map eval)
     pos_3d: [f32; 3],
+    /// Previous velocity for accel/jerk limiting
+    last_velocity: f32,
+    /// Previous acceleration for jerk limiting
+    last_accel: f32,
     /// Cached last-known broadcasts — avoids dropping IR factors on empty ticks.
     last_broadcasts: Vec<RobotBroadcast, MAX_NEIGHBOURS>,
     /// Maximum allowed position (from safety cap). f32::MAX if unconstrained.
@@ -72,6 +79,8 @@ impl<C: CommsInterface> RobotAgent<C> {
             position_s: 0.0,
             current_edge: EdgeId(0),
             pos_3d: [0.0; 3],
+            last_velocity: 0.0,
+            last_accel: 0.0,
             last_broadcasts: Vec::new(),
             last_max_position: f32::MAX,
         }
@@ -149,18 +158,33 @@ impl<C: CommsInterface> RobotAgent<C> {
         // 5. Run GBP
         self.graph.iterate(GBP_ITERATIONS);
 
-        // 6. Extract commanded velocity from first dynamics factor (s_1 - s_0) / dt
+        // 6. Extract commanded velocity from GBP
         let s0 = self.graph.variables[0].mean();
         let s1 = self.graph.variables[1].mean();
-        let mut velocity = ((s1 - s0) / DT).max(0.0);
+        let raw_velocity = ((s1 - s0) / DT).max(0.0);
 
-        // 7. Safety monitoring (no override — pure GBP velocity).
-        // The IR factors should produce correct velocity through the graph.
-        // We only track distance for diagnostics and the hard position clamp
-        // in the simulator's agent_task (last resort, shouldn't trigger with tuned GBP).
+        // 7. Accel + jerk limiting — smooth the GBP output
+        let desired_accel = (raw_velocity - self.last_velocity) / AGENT_DT;
+        // Jerk limit: clamp rate of acceleration change
+        let jerk = (desired_accel - self.last_accel) / AGENT_DT;
+        let clamped_jerk = jerk.clamp(-MAX_JERK, MAX_JERK);
+        let accel = self.last_accel + clamped_jerk * AGENT_DT;
+        // Accel limit
+        let clamped_accel = accel.clamp(-MAX_ACCEL, MAX_ACCEL);
+        // Get max speed from current edge
+        let max_speed = map.edges.iter()
+            .find(|e| e.id == self.current_edge)
+            .map(|e| e.speed.max)
+            .unwrap_or(2.5);
+        let velocity = (self.last_velocity + clamped_accel * AGENT_DT).clamp(0.0, max_speed);
+
+        self.last_accel = clamped_accel;
+        self.last_velocity = velocity;
+
+        // 8. Safety monitoring — track 3D distance for hard clamp signal
         let dist_3d = self.min_3d_distance_to_neighbours(&broadcasts);
         if dist_3d <= D_SAFE {
-            self.last_max_position = self.position_s; // signal to simulator for hard clamp
+            self.last_max_position = self.position_s;
         } else {
             self.last_max_position = f32::MAX;
         }
@@ -226,7 +250,7 @@ impl<C: CommsInterface> RobotAgent<C> {
     fn update_interrobot_factors(
         &mut self,
         broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>,
-        _map: &Map,
+        map: &Map,
     ) {
         let my_edges = self.planned_edge_ids();
         let mut active_ids: Vec<RobotId, MAX_NEIGHBOURS> = Vec::new();
@@ -248,7 +272,7 @@ impl<C: CommsInterface> RobotAgent<C> {
             let activation_range = D_SAFE * 3.0;
 
             // For each variable k (skip k=0 — anchor prior is too strong, factor would
-            // have no effect), check if predicted positions are close enough.
+            // have no effect), check if predicted positions are close enough in 3D.
             for k in 1..MAX_HORIZON {
                 let my_s_k = self.graph.variables[k].mean();
                 let their_s_k = if k < bcast.belief_means.len() {
@@ -256,7 +280,18 @@ impl<C: CommsInterface> RobotAgent<C> {
                 } else {
                     bcast.position_s
                 };
-                let dist = (my_s_k - their_s_k).abs();
+
+                // Convert both arc-lengths to 3D positions via trajectory
+                let my_pos = self.trajectory.as_ref()
+                    .and_then(|t| t.edge_and_local_s(my_s_k))
+                    .and_then(|(eid, ls, _)| map.eval_position(eid, ls))
+                    .unwrap_or(self.pos_3d);
+                let their_pos = bcast.pos; // neighbour's 3D from broadcast (current pos, not per-k)
+
+                let dx = my_pos[0] - their_pos[0];
+                let dy = my_pos[1] - their_pos[1];
+                let dz = my_pos[2] - their_pos[2];
+                let dist = libm::sqrtf(dx * dx + dy * dy + dz * dz);
 
                 if dist < activation_range {
                     // Add factor at this timestep if we don't have one already
