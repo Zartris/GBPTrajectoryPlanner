@@ -501,3 +501,12 @@ git tag m4-complete
 ```
 
 ---
+
+## Required change from M3: 3D-based safety cap
+
+M3's `nearest_ahead_distance` / `max_position` compare global arc-length (`position_s`) which only works when both robots share the same trajectory. For merge scenarios (different trajectories converging on a shared edge), this comparison is meaningless.
+
+**Must change in M4:**
+- [ ] Safety cap uses **3D world distance** (`|pos_3d_a - pos_3d_b|`) instead of arc-length difference
+- [ ] "Ahead" is determined by whether the other robot is on a shared edge AND further along it in the travel direction
+- [ ] At merge points, both robots approaching the same node should slow down based on 3D proximity, not trajectory-relative position
