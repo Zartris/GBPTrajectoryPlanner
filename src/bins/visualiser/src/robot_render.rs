@@ -1,15 +1,16 @@
 // src/bins/visualiser/src/robot_render.rs
 use bevy::prelude::*;
 use gbp_map::map::{Map, EdgeId};
-use crate::state::{MapRes, RobotStates, WsInbox};
+use gbp_map::MAX_HORIZON;
+use crate::state::{MapRes, RobotState, RobotStates, WsInbox};
 use tracing::warn;
 
 pub struct RobotRenderPlugin;
 
 impl Plugin for RobotRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_robot_arrow)
-           .add_systems(Update, (drain_ws_inbox, update_robot_transforms, draw_planned_path).chain());
+        app.add_systems(Startup, spawn_robot_arrows)
+           .add_systems(Update, (drain_ws_inbox, update_robot_transforms, draw_planned_path, draw_belief_tubes, draw_factor_links).chain());
     }
 }
 
@@ -75,24 +76,57 @@ pub fn dashed_segment_pairs(pts: &[[f32; 3]]) -> heapless::Vec<([f32; 3], [f32; 
 /// Target dash length in meters. Gaps are the same length.
 pub const DASH_LENGTH: f32 = 0.3;
 
-fn spawn_robot_arrow(
+/// Tube radius = sqrt(variance). Clamp to 0 to avoid NaN.
+pub fn belief_tube_radius(variance: f32) -> f32 {
+    variance.max(0.0).sqrt()
+}
+
+/// Evaluate 3D world positions for a set of arc-length belief means on an edge.
+/// Applies map->Bevy coordinate transform.
+pub fn belief_tube_positions(
+    map: &Map,
+    edge_id: EdgeId,
+    means: &[f32],
+) -> heapless::Vec<[f32; 3], MAX_HORIZON> {
+    let mut pts = heapless::Vec::new();
+    for &s in means.iter() {
+        match map.eval_position(edge_id, s) {
+            Some(p) => { let _ = pts.push([p[0], p[2], -p[1]]); }
+            None => { let _ = pts.push([0.0, 0.0, 0.0]); }
+        }
+    }
+    pts
+}
+
+/// Robot arrow colors for multi-robot display.
+const ROBOT_COLORS: &[(f32, f32, f32)] = &[
+    (0.1, 0.7, 1.0),   // blue
+    (1.0, 0.4, 0.1),   // orange
+    (0.2, 1.0, 0.4),   // green
+    (1.0, 0.2, 0.8),   // pink
+];
+
+fn spawn_robot_arrows(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Cone pointing along +Y in mesh space; we rotate to align with tangent.
-    let cone = meshes.add(Cone { radius: 0.2, height: 0.5 });
-    let mat  = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.1, 0.7, 1.0),
-        emissive: bevy::color::LinearRgba::new(0.1, 0.5, 1.0, 1.0),
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(cone),
-        MeshMaterial3d(mat),
-        Transform::IDENTITY,
-        RobotArrow { robot_id: 0 },
-    ));
+    // Spawn arrows for robot 0 and robot 1
+    for robot_id in 0..2u32 {
+        let (r, g, b) = ROBOT_COLORS.get(robot_id as usize).copied().unwrap_or((0.5, 0.5, 0.5));
+        let cone = meshes.add(Cone { radius: 0.2, height: 0.5 });
+        let mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(r, g, b),
+            emissive: bevy::color::LinearRgba::new(r, g, b, 1.0),
+            ..default()
+        });
+        commands.spawn((
+            Mesh3d(cone),
+            MeshMaterial3d(mat),
+            Transform::IDENTITY,
+            RobotArrow { robot_id },
+        ));
+    }
 }
 
 /// Drain WsInbox and update RobotStates each frame.
@@ -102,7 +136,8 @@ fn drain_ws_inbox(
 ) {
     let mut q = inbox.0.lock().unwrap_or_else(|e| e.into_inner());
     while let Some(msg) = q.pop_front() {
-        states.0.insert(msg.robot_id, msg);
+        let state = states.0.entry(msg.robot_id).or_insert_with(RobotState::default);
+        state.update_from_msg(&msg);
     }
 }
 
@@ -156,6 +191,53 @@ fn draw_planned_path(
             for (a, b) in dashed_segment_pairs(&pts) {
                 gizmos.line(Vec3::from(a) + up, Vec3::from(b) + up, color);
             }
+        }
+    }
+}
+
+/// Draw belief tube gizmos: circles at each belief mean position, radius = sqrt(variance).
+fn draw_belief_tubes(
+    map: Res<MapRes>,
+    states: Res<RobotStates>,
+    mut gizmos: Gizmos,
+) {
+    for state in states.0.values() {
+        let pts = belief_tube_positions(&map.0, state.current_edge, &state.belief_means);
+        for (i, &center) in pts.iter().enumerate() {
+            let r = belief_tube_radius(state.belief_vars[i]);
+            if r > 0.001 {
+                gizmos.circle(
+                    Isometry3d::new(
+                        Vec3::from(center),
+                        Quat::IDENTITY,
+                    ),
+                    r,
+                    Color::srgba(1.0, 0.8, 0.2, 0.5),
+                );
+            }
+        }
+    }
+}
+
+/// Draw a line between each pair of robots that have active inter-robot factors.
+fn draw_factor_links(
+    states: Res<RobotStates>,
+    mut gizmos: Gizmos,
+) {
+    let robots: Vec<(u32, [f32; 3])> = states.0.iter()
+        .filter(|(_, s)| s.active_factor_count > 0)
+        .map(|(&id, s)| (id, s.pos_3d))
+        .collect();
+
+    for i in 0..robots.len() {
+        for j in (i+1)..robots.len() {
+            let (_, pos_i) = robots[i];
+            let (_, pos_j) = robots[j];
+            gizmos.line(
+                Vec3::from(pos_i),
+                Vec3::from(pos_j),
+                Color::srgba(1.0, 0.3, 0.3, 0.8),
+            );
         }
     }
 }
@@ -243,7 +325,6 @@ mod tests {
         }).unwrap();
 
         let pts = edge_sample_points(&m, EdgeId(0), 2);
-        // pts[1] = end point: map (x=0,y=2,z=1) -> bevy (x=0, y=map_z=1, z=-map_y=-2)
         assert!((pts[1][1] - 1.0).abs() < 1e-3, "bevy_y(=map_z) expected 1.0, got {}", pts[1][1]);
         assert!((pts[1][2] - (-2.0)).abs() < 1e-3, "bevy_z(=-map_y) expected -2.0, got {}", pts[1][2]);
     }
@@ -265,5 +346,36 @@ mod tests {
         assert_eq!(pairs.len(), 2);
         assert_eq!(pairs[0], ([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]));
         assert_eq!(pairs[1], ([2.0, 0.0, 0.0], [3.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn belief_tube_radius_is_sqrt_variance() {
+        let var: f32 = 4.0;
+        let radius = belief_tube_radius(var);
+        assert!((radius - 2.0).abs() < 1e-4, "expected sqrt(4)=2, got {}", radius);
+    }
+
+    #[test]
+    fn belief_tube_radius_clamps_near_zero_variance() {
+        let radius = belief_tube_radius(0.0);
+        assert!(radius >= 0.0 && radius.is_finite());
+    }
+
+    #[test]
+    fn belief_positions_len_matches_k() {
+        let mut m = Map::new("t");
+        m.add_node(Node { id: NodeId(0), position: [0.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+        m.add_node(Node { id: NodeId(1), position: [5.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+        let sp = SpeedProfile { max: 2.5, nominal: 2.0, accel_limit: 1.0, decel_limit: 1.0 };
+        let sf = SafetyProfile { clearance: 0.3 };
+        m.add_edge(Edge {
+            id: EdgeId(0), start: NodeId(0), end: NodeId(1),
+            geometry: EdgeGeometry::Line { start: [0.0,0.0,0.0], end: [5.0,0.0,0.0], length: 5.0 },
+            speed: sp, safety: sf,
+        }).unwrap();
+
+        let means: Vec<f32> = (0..8).map(|i| i as f32 * 0.5).collect();
+        let positions = belief_tube_positions(&m, EdgeId(0), &means);
+        assert_eq!(positions.len(), means.len());
     }
 }

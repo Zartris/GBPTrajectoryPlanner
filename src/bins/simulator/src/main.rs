@@ -1,14 +1,14 @@
-mod physics;
+pub mod physics;
 mod broadcast_task;
 mod ws_server;
-mod sim_comms;
-mod agent_runner;
+pub mod sim_comms;
+pub mod agent_runner;
 
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
-use gbp_comms::{RobotStateMsg, TrajectoryCommand};
+use gbp_comms::{RobotBroadcast, RobotStateMsg, TrajectoryCommand};
 use gbp_map::map::{EdgeId, Map, NodeId};
 use heapless::Vec as HVec;
 use physics::PhysicsState;
@@ -59,35 +59,64 @@ async fn main() {
         .unwrap_or_else(|e| panic!("map parse error: {}", e));
 
     let start_node = map.edges.first().expect("map has no edges").start;
-    let first_edge_id = map.edges.first().unwrap().id;
-    let first_edge_len = map.edges.first().unwrap().geometry.length();
     let goal_node = map.nodes.last().expect("map has no nodes").id;
 
     let map_arc = Arc::new(map);
-
-    // Set up runner with A* trajectory
-    let (runner, total_length) = {
-        let mut r = AgentRunner::new(SimComms, map_arc.clone(), 0);
-        let total = if let Some(path) = gbp_map::astar::astar(&map_arc, start_node, goal_node) {
-            let traj = build_trajectory_edges(&map_arc, &path);
-            info!("A* path: {} edges, start={:?} goal={:?}", traj.len(), start_node, goal_node);
-            r.set_trajectory(traj)
-        } else {
-            info!("no A* path found, using single edge");
-            let mut traj = HVec::new();
-            let _ = traj.push((first_edge_id, first_edge_len));
-            r.set_trajectory(traj)
-        };
-        (Arc::new(Mutex::new(r)), total)
-    };
-
-    info!("total trajectory length: {:.2}m", total_length);
-    let physics = Arc::new(Mutex::new(PhysicsState::new(total_length)));
 
     // Channels
     let (tx_state, _): (broadcast::Sender<RobotStateMsg>, _) = broadcast::channel(16);
     let (tx_json, _): (broadcast::Sender<String>, _) = broadcast::channel(16);
     let (cmd_tx, mut cmd_rx): (mpsc::Sender<String>, _) = mpsc::channel(8);
+
+    // Create shared broadcast channel for inter-robot messages
+    let (bcast_tx, bcast_rx0) = broadcast::channel::<RobotBroadcast>(64);
+    let bcast_rx1 = bcast_tx.subscribe();
+
+    // Robot 0: starts at s=0
+    let (runner0, total_length0) = {
+        let comms0 = SimComms::new(bcast_tx.clone(), bcast_rx0);
+        let mut r = AgentRunner::new(comms0, map_arc.clone(), 0);
+        let total = if let Some(path) = gbp_map::astar::astar(&map_arc, start_node, goal_node) {
+            let traj = build_trajectory_edges(&map_arc, &path);
+            info!("Robot 0: A* path: {} edges, start={:?} goal={:?}", traj.len(), start_node, goal_node);
+            r.set_trajectory(traj)
+        } else {
+            info!("Robot 0: no A* path found, using single edge");
+            let first_edge = map_arc.edges.first().unwrap();
+            let mut traj = HVec::new();
+            let _ = traj.push((first_edge.id, first_edge.geometry.length()));
+            r.set_trajectory(traj)
+        };
+        (Arc::new(Mutex::new(r)), total)
+    };
+
+    // Robot 1: starts behind robot 0 (at s offset ~1.0)
+    let (runner1, total_length1) = {
+        let comms1 = SimComms::new(bcast_tx.clone(), bcast_rx1);
+        let mut r = AgentRunner::new(comms1, map_arc.clone(), 1);
+        let total = if let Some(path) = gbp_map::astar::astar(&map_arc, start_node, goal_node) {
+            let traj = build_trajectory_edges(&map_arc, &path);
+            info!("Robot 1: A* path: {} edges, start={:?} goal={:?}", traj.len(), start_node, goal_node);
+            r.set_trajectory(traj)
+        } else {
+            info!("Robot 1: no A* path found, using single edge");
+            let first_edge = map_arc.edges.first().unwrap();
+            let mut traj = HVec::new();
+            let _ = traj.push((first_edge.id, first_edge.geometry.length()));
+            r.set_trajectory(traj)
+        };
+        (Arc::new(Mutex::new(r)), total)
+    };
+
+    info!("Robot 0: total trajectory length: {:.2}m", total_length0);
+    info!("Robot 1: total trajectory length: {:.2}m", total_length1);
+
+    let physics0 = Arc::new(Mutex::new(PhysicsState::new(total_length0)));
+    // Robot 0 starts at s=2.0 (ahead)
+    physics0.lock().unwrap().position_s = 2.0;
+
+    let physics1 = Arc::new(Mutex::new(PhysicsState::new(total_length1)));
+    // Robot 1 starts at s=0.0 (behind)
 
     // Relay: RobotStateMsg -> JSON
     let tx_json_relay = tx_json.clone();
@@ -112,15 +141,14 @@ async fn main() {
         }
     });
 
-    // Command handler: replan on TrajectoryCommand
+    // Command handler (simplified for M3 — uses robot 0 only)
     let map_cmd = Arc::clone(&map_arc);
-    let runner_cmd = Arc::clone(&runner);
-    let phys_cmd = Arc::clone(&physics);
+    let runner_cmd = Arc::clone(&runner0);
+    let phys_cmd = Arc::clone(&physics0);
     tokio::spawn(async move {
         while let Some(json) = cmd_rx.recv().await {
             if let Ok(cmd) = serde_json::from_str::<TrajectoryCommand>(&json) {
                 let global_s = phys_cmd.lock().unwrap_or_else(|e| e.into_inner()).position_s;
-                // Find which node we're near
                 let (cur_edge, _) = runner_cmd.lock().unwrap_or_else(|e| e.into_inner()).edge_at_s(global_s);
                 let from_node = match map_cmd.edges.iter().find(|e| e.id == cur_edge).map(|e| e.start) {
                     Some(node) => node,
@@ -142,8 +170,11 @@ async fn main() {
         }
     });
 
-    tokio::spawn(physics::physics_task(Arc::clone(&physics)));
-    tokio::spawn(agent_task(Arc::clone(&physics), runner, tx_state));
+    // Spawn physics and agent tasks for both robots
+    tokio::spawn(physics::physics_task(Arc::clone(&physics0)));
+    tokio::spawn(physics::physics_task(Arc::clone(&physics1)));
+    tokio::spawn(agent_task(Arc::clone(&physics0), runner0, tx_state.clone(), 0));
+    tokio::spawn(agent_task(Arc::clone(&physics1), runner1, tx_state.clone(), 1));
 
     let router = ws_server::build_router(tx_json, cmd_tx);
     let listener = tokio::net::TcpListener::bind(&args.bind).await

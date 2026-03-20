@@ -56,6 +56,15 @@ impl Trajectory {
 
     pub fn is_empty(&self) -> bool { self.edges.is_empty() }
 
+    /// Return the edge IDs in the trajectory.
+    pub fn edge_ids(&self) -> Vec<EdgeId, MAX_PATH_EDGES> {
+        let mut ids = Vec::new();
+        for &(eid, _) in self.edges.iter() {
+            let _ = ids.push(eid);
+        }
+        ids
+    }
+
     /// Total planned distance from start_s.
     pub fn total_length(&self) -> f32 {
         let mut total = 0.0f32;

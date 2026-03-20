@@ -14,6 +14,8 @@ pub struct InterRobotFactorSet {
 impl InterRobotFactorSet {
     pub fn new() -> Self { Self { entries: Vec::new() } }
 
+    pub fn count(&self) -> usize { self.entries.len() }
+
     pub fn insert(&mut self, robot_id: RobotId, factor_idx: usize) {
         // Replace if already present, otherwise push
         if let Some(e) = self.entries.iter_mut().find(|(id, _)| *id == robot_id) {
