@@ -24,8 +24,8 @@ pub struct RobotState {
     pub belief_means: [f32; MAX_HORIZON],
     pub belief_vars: [f32; MAX_HORIZON],
     pub active_factor_count: usize,
-    pub sigma_dyn: f32,
-    pub sigma_r: f32,
+    /// How many consecutive zero-count updates we've seen (for debounce)
+    zero_streak: u8,
 }
 
 impl Default for RobotState {
@@ -39,8 +39,7 @@ impl Default for RobotState {
             belief_means: [0.0; MAX_HORIZON],
             belief_vars: [0.0; MAX_HORIZON],
             active_factor_count: 0,
-            sigma_dyn: 0.0,
-            sigma_r: 0.0,
+            zero_streak: 0,
         }
     }
 }
@@ -55,7 +54,17 @@ impl RobotState {
         self.planned_edges = msg.planned_edges.clone();
         self.belief_means = msg.belief_means;
         self.belief_vars = msg.belief_vars;
-        self.active_factor_count = msg.ir_factor_count as usize;
+        // Debounce: only show 0 after 3 consecutive zero-count messages
+        let new_count = msg.ir_factor_count as usize;
+        if new_count > 0 {
+            self.active_factor_count = new_count;
+            self.zero_streak = 0;
+        } else {
+            self.zero_streak = self.zero_streak.saturating_add(1);
+            if self.zero_streak >= 3 {
+                self.active_factor_count = 0;
+            }
+        }
     }
 
 }
