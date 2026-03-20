@@ -49,8 +49,6 @@ fn draw_hud(
             egui::Window::new(format!("Robot {}", id)).show(ctx, |ui| {
                 ui.label(format!("Speed:   {}", fmt_velocity(state.velocity)));
                 ui.label(format!("Edge:    {:?} s={:.2}", state.current_edge, state.position_s));
-                ui.label(format!("sigma_dyn: {:.4}", state.sigma_dyn));
-                ui.label(format!("sigma_r:   {:.4}", state.sigma_r));
                 ui.label(fmt_factor_count(state.active_factor_count));
             });
         }
