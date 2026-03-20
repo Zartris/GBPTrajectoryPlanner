@@ -8,13 +8,15 @@ use crate::interrobot_set::InterRobotFactorSet;
 
 /// Number of dynamics factors = K-1 (one per adjacent timestep pair)
 const NUM_DYN_FACTORS: usize = MAX_HORIZON - 1;
-/// Max total factors = dynamics + inter-robot neighbours
-const MAX_FACTORS: usize = NUM_DYN_FACTORS + MAX_NEIGHBOURS;
+/// Max inter-robot factors = one per variable per neighbour (K * MAX_NEIGHBOURS)
+const MAX_IR_FACTORS: usize = MAX_HORIZON * MAX_NEIGHBOURS;
+/// Max total factors = dynamics + inter-robot
+const MAX_FACTORS: usize = NUM_DYN_FACTORS + MAX_IR_FACTORS;
 
 const GBP_ITERATIONS: usize = 15;
 const DT: f32 = 0.1; // seconds per GBP timestep
 const D_SAFE: f32 = 0.3; // minimum clearance (m)
-const SIGMA_R: f32 = 0.1; // inter-robot factor noise
+const SIGMA_R: f32 = 0.5; // inter-robot factor noise (weaker to avoid overwhelming dynamics)
 
 /// Output of one agent step.
 pub struct StepOutput {
@@ -214,13 +216,19 @@ impl<C: CommsInterface> RobotAgent<C> {
 
             let shares_edge = bcast.planned_edges.iter().any(|e| my_edges.contains(e))
                 || my_edges.contains(&bcast.current_edge);
-            if !shares_edge { continue; }
+            if !shares_edge {
+                // Remove any existing factors for this robot
+                if self.ir_set.contains_robot(bcast.robot_id) {
+                    self.ir_set.remove_robot(bcast.robot_id, &mut self.graph);
+                }
+                continue;
+            }
 
             let _ = active_ids.push(bcast.robot_id);
+            let activation_range = D_SAFE * 3.0;
 
-            // Find the timestep k where our predicted position is closest to theirs
-            let mut best_k = 0usize;
-            let mut best_dist = f32::MAX;
+            // For EACH variable k, check if our predicted position is close
+            // to the neighbour's predicted position at the same timestep.
             for k in 0..MAX_HORIZON {
                 let my_s_k = self.graph.variables[k].mean();
                 let their_s_k = if k < bcast.belief_means.len() {
@@ -229,35 +237,31 @@ impl<C: CommsInterface> RobotAgent<C> {
                     bcast.position_s
                 };
                 let dist = (my_s_k - their_s_k).abs();
-                if dist < best_dist {
-                    best_dist = dist;
-                    best_k = k;
-                }
-            }
 
-            if !self.ir_set.contains(bcast.robot_id) {
-                // Add new factor at the closest timestep
-                let factor = InterRobotFactor::new(best_k, D_SAFE, SIGMA_R);
-                if let Ok(idx) = self.graph.add_factor(FactorKind::InterRobot(factor)) {
-                    self.ir_set.insert(bcast.robot_id, idx);
-                }
-            } else if let Some(factor_idx) = self.ir_set.factor_idx(bcast.robot_id) {
-                // Update existing factor to connect at the closest timestep
-                if let Some(FactorKind::InterRobot(irf)) = self.graph.get_factor_kind_mut(factor_idx) {
-                    irf.set_variable_index(best_k);
+                if dist < activation_range {
+                    // Add factor at this timestep if we don't have one already
+                    if !self.ir_set.contains(bcast.robot_id, k) {
+                        let factor = InterRobotFactor::new(k, D_SAFE, SIGMA_R);
+                        if let Ok(idx) = self.graph.add_factor(FactorKind::InterRobot(factor)) {
+                            self.ir_set.insert(bcast.robot_id, k, idx);
+                        }
+                    }
+                } else {
+                    // Too far apart at this timestep — remove factor if it exists
+                    // (skip for now to avoid complex mid-array removal; factors deactivate via is_active)
                 }
             }
         }
 
-        // Remove factors for robots no longer sharing edges
+        // Remove all factors for robots no longer sharing edges
         let mut to_remove: Vec<RobotId, MAX_NEIGHBOURS> = Vec::new();
-        for &(rid, _) in self.ir_set.iter() {
-            if !active_ids.contains(&rid) {
+        for &(rid, _, _) in self.ir_set.iter() {
+            if !active_ids.contains(&rid) && !to_remove.contains(&rid) {
                 let _ = to_remove.push(rid);
             }
         }
         for rid in to_remove.iter() {
-            self.ir_set.remove(*rid, &mut self.graph);
+            self.ir_set.remove_robot(*rid, &mut self.graph);
         }
     }
 
@@ -268,16 +272,17 @@ impl<C: CommsInterface> RobotAgent<C> {
     ) {
         for bcast in broadcasts.iter() {
             if bcast.robot_id == self.robot_id { continue; }
-            if let Some(factor_idx) = self.ir_set.factor_idx(bcast.robot_id) {
-                // Read the variable index and its mean
-                let var_idx = self.graph.get_factor_kind(factor_idx)
-                    .and_then(|fk| if let FactorKind::InterRobot(irf) = fk { Some(irf.variable_indices()[0]) } else { None })
-                    .unwrap_or(0);
-                let s_a = self.graph.variables[var_idx].mean();
 
-                // Neighbour's predicted position at the same timestep
-                let s_b = if var_idx < bcast.belief_means.len() {
-                    bcast.belief_means[var_idx]
+            // Collect (k, factor_idx) pairs for this robot to avoid borrow issues
+            let mut pairs: Vec<(usize, usize), MAX_HORIZON> = Vec::new();
+            for (k, fidx) in self.ir_set.factors_for(bcast.robot_id) {
+                let _ = pairs.push((k, fidx));
+            }
+
+            for &(k, factor_idx) in pairs.iter() {
+                let s_a = self.graph.variables[k].mean();
+                let s_b = if k < bcast.belief_means.len() {
+                    bcast.belief_means[k]
                 } else {
                     bcast.position_s
                 };
