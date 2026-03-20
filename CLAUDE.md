@@ -57,6 +57,7 @@ Nothing else in `gbp-core` changes. See `docs/adding_a_factor.md` for the step-b
 - Memory budget: ~250 KB / 384 KB SRAM (WiFi stack ~100 KB, map ~20 KB, GBP ~18 KB)
 - Strict denies: `clippy::mem_forget`, `clippy::large_stack_frames`
 - New tasks: use `mk_static!` macro for `'static` data, spawn via `spawner.spawn(...).unwrap()`
+- **Always use context7** to look up library docs before writing or reviewing code — APIs change between versions and training data may be stale. This applies to all dependencies: `esp-hal`, `embassy-*`, `esp-radio`, `postcard`, `bevy`, `bevy_egui`, `tokio`, `axum`, `heapless`, `serde`, etc.
 
 ## Crate Dependency Graph
 ```

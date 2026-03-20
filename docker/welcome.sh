@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TheRobotLibrary — tmux cheat sheet
+# GBPTrajectoryPlanner — tmux cheat sheet
 # Printed once on session creation; stays in scroll history (Prefix+[ to scroll up).
 
 BOLD="\033[1m"
@@ -23,7 +23,7 @@ blank(){ printf "${GREY}║${RESET} %-16s ${BAR} %-31s ${GREY}║${RESET}\n" "" 
 
 echo ""
 echo -e "$TOP"
-printf "${GREY}║${RESET}  ${ORANGE}${BOLD}TheRobotLibrary${RESET}  ${GREY}—${RESET}  ${CYAN}tmux quick-ref${RESET}  ${GREY}(prefix = ${ORANGE}Ctrl+A${GREY})${RESET}   ${GREY}║${RESET}\n"
+printf "${GREY}║${RESET}  ${ORANGE}${BOLD}GBPTrajectoryPlanner${RESET}  ${GREY}—${RESET}  ${CYAN}tmux quick-ref${RESET}  ${GREY}(prefix = ${ORANGE}Ctrl+A${GREY})${RESET}   ${GREY}║${RESET}\n"
 echo -e "$MID"
 printf "${GREY}║${RESET}  ${BOLD}${WHITE}%-14s${RESET}  ${BAR}  ${BOLD}${WHITE}%-30s${RESET} ${GREY}║${RESET}\n" "ACTION" "KEYS"
 echo -e "$DIV"

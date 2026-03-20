@@ -2,22 +2,31 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": { "tool_name": "Edit", "file_path": "firmware/.*\\.rs$" },
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "cd /repo/firmware && cargo clippy 2>&1 | head -30 || true"
+            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -q '\"file_path\".*firmware/.*\\.rs'; then cd /repo/firmware && cargo clippy 2>&1 | head -30 || true; fi"
           }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": { "tool_name": "Edit", "file_path": "Cargo\\.lock$" },
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Cargo.lock should not be manually edited'; exit 2"
+            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -q '\"file_path\".*Cargo\\.lock'; then echo 'Cargo.lock should not be manually edited'; exit 2; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -qE '\"file_path\".*crates/gbp-(core|agent|comms|map)/'; then if echo \"$CLAUDE_TOOL_INPUT\" | grep -qE '(use std::|extern crate std|use alloc::|extern crate alloc)'; then echo 'BLOCKED: std/alloc import in no_std core crate'; exit 2; fi; fi"
           }
         ]
       }
