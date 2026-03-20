@@ -3,6 +3,11 @@ name    = "gbp-comms"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+serde = ["dep:serde", "heapless/serde", "gbp-map/serde"]
+
 [dependencies]
 heapless = { workspace = true }
 gbp-map  = { path = "../gbp-map" }
+serde    = { workspace = true, optional = true }
