@@ -26,7 +26,7 @@ struct Args {
     bind: String,
 }
 
-/// Convert A* edge path to (EdgeId, length) pairs for set_trajectory_from_edges.
+/// Convert A* edge path to (EdgeId, length) pairs.
 pub fn build_trajectory_edges(
     map: &Map,
     path: &heapless::Vec<EdgeId, { gbp_map::MAX_PATH_EDGES }>,
@@ -58,42 +58,38 @@ async fn main() {
     let map = gbp_map::parser::parse_yaml(&yaml)
         .unwrap_or_else(|e| panic!("map parse error: {}", e));
 
-    // M2: start on first edge, goal = last node in map
-    let first_edge = map.edges.first().expect("map has no edges");
-    let start_node = first_edge.start;
+    let start_node = map.edges.first().expect("map has no edges").start;
+    let first_edge_id = map.edges.first().unwrap().id;
+    let first_edge_len = map.edges.first().unwrap().geometry.length();
     let goal_node = map.nodes.last().expect("map has no nodes").id;
-    let edge_id = first_edge.id;
-    let edge_length = first_edge.geometry.length();
-    info!(
-        "edge {:?} length={:.2}m start={:?} goal={:?}",
-        edge_id, edge_length, start_node, goal_node
-    );
 
     let map_arc = Arc::new(map);
-    let physics = Arc::new(Mutex::new(PhysicsState::new(edge_id, edge_length)));
 
-    let runner = {
+    // Set up runner with A* trajectory
+    let (runner, total_length) = {
         let mut r = AgentRunner::new(SimComms, map_arc.clone(), 0);
-        // Initial A* from start to goal
-        if let Some(path) = gbp_map::astar::astar(&map_arc, start_node, goal_node) {
+        let total = if let Some(path) = gbp_map::astar::astar(&map_arc, start_node, goal_node) {
             let traj = build_trajectory_edges(&map_arc, &path);
-            info!("A* found {} edges", traj.len());
-            r.set_trajectory_from_edges(traj, 0.0);
+            info!("A* path: {} edges, start={:?} goal={:?}", traj.len(), start_node, goal_node);
+            r.set_trajectory(traj)
         } else {
-            info!("no A* path, using single edge");
-            r.set_single_edge_trajectory(edge_id, edge_length);
-        }
-        Arc::new(Mutex::new(r))
+            info!("no A* path found, using single edge");
+            let mut traj = HVec::new();
+            let _ = traj.push((first_edge_id, first_edge_len));
+            r.set_trajectory(traj)
+        };
+        (Arc::new(Mutex::new(r)), total)
     };
 
-    // Domain channel: agent_task -> relay -> ws_server
+    info!("total trajectory length: {:.2}m", total_length);
+    let physics = Arc::new(Mutex::new(PhysicsState::new(total_length)));
+
+    // Channels
     let (tx_state, _): (broadcast::Sender<RobotStateMsg>, _) = broadcast::channel(16);
-    // JSON channel for WebSocket (ws_server is domain-agnostic)
     let (tx_json, _): (broadcast::Sender<String>, _) = broadcast::channel(16);
-    // Command channel: ws_server -> command handler
     let (cmd_tx, mut cmd_rx): (mpsc::Sender<String>, _) = mpsc::channel(8);
 
-    // Relay: RobotStateMsg -> JSON string.
+    // Relay: RobotStateMsg -> JSON
     let tx_json_relay = tx_json.clone();
     let mut rx_state = tx_state.subscribe();
     tokio::spawn(async move {
@@ -109,64 +105,52 @@ async fn main() {
                     tracing::warn!("relay: skipped {} messages", n);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    tracing::info!("relay: broadcast channel closed, shutting down");
+                    tracing::info!("relay: channel closed");
                     break;
                 }
             }
         }
     });
 
-    // Command handler: parse TrajectoryCommand, replan
+    // Command handler: replan on TrajectoryCommand
     let map_cmd = Arc::clone(&map_arc);
     let runner_cmd = Arc::clone(&runner);
     let phys_cmd = Arc::clone(&physics);
     tokio::spawn(async move {
         while let Some(json) = cmd_rx.recv().await {
             if let Ok(cmd) = serde_json::from_str::<TrajectoryCommand>(&json) {
-                let (current_s, cur_edge) = {
-                    let p = phys_cmd.lock().unwrap_or_else(|e| e.into_inner());
-                    (p.position_s, p.current_edge)
-                };
-                // Find current node (start of current edge)
-                let from_node = map_cmd
-                    .edges
-                    .iter()
+                let global_s = phys_cmd.lock().unwrap_or_else(|e| e.into_inner()).position_s;
+                // Find which node we're near
+                let (cur_edge, _) = runner_cmd.lock().unwrap_or_else(|e| e.into_inner()).edge_at_s(global_s);
+                let from_node = map_cmd.edges.iter()
                     .find(|e| e.id == cur_edge)
                     .map(|e| e.start)
                     .unwrap_or(NodeId(0));
                 if let Some(path) = gbp_map::astar::astar(&map_cmd, from_node, cmd.goal_node) {
                     let traj = build_trajectory_edges(&map_cmd, &path);
-                    runner_cmd
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .set_trajectory_from_edges(traj, current_s);
-                    info!("replanned to {:?}", cmd.goal_node);
+                    let mut r = runner_cmd.lock().unwrap_or_else(|e| e.into_inner());
+                    let new_total = r.set_trajectory(traj);
+                    let mut p = phys_cmd.lock().unwrap_or_else(|e| e.into_inner());
+                    p.position_s = 0.0;
+                    p.total_length = new_total;
+                    info!("replanned to {:?} ({:.2}m)", cmd.goal_node, new_total);
                 }
             }
         }
     });
 
     tokio::spawn(physics::physics_task(Arc::clone(&physics)));
-    tokio::spawn(agent_task(
-        Arc::clone(&physics),
-        runner,
-        Arc::clone(&map_arc),
-        tx_state,
-    ));
+    tokio::spawn(agent_task(Arc::clone(&physics), runner, tx_state));
 
     let router = ws_server::build_router(tx_json, cmd_tx);
-    let listener = tokio::net::TcpListener::bind(&args.bind)
-        .await
+    let listener = tokio::net::TcpListener::bind(&args.bind).await
         .unwrap_or_else(|e| panic!("cannot bind {}: {}", args.bind, e));
     let client_host = if args.bind.starts_with("0.0.0.0") {
         args.bind.replacen("0.0.0.0", "localhost", 1)
     } else {
         args.bind.clone()
     };
-    info!(
-        "WebSocket server listening on ws://{}/ws (bind: {})",
-        client_host, args.bind
-    );
+    info!("WebSocket server listening on ws://{}/ws (bind: {})", client_host, args.bind);
     axum::serve(listener, router).await.unwrap();
 }
 
@@ -177,57 +161,21 @@ mod tests {
 
     fn two_edge_map() -> Map {
         let mut m = Map::new("two");
-        m.add_node(Node {
-            id: NodeId(0),
-            position: [0.0, 0.0, 0.0],
-            node_type: NodeType::Waypoint,
-        })
-        .unwrap();
-        m.add_node(Node {
-            id: NodeId(1),
-            position: [3.0, 0.0, 0.0],
-            node_type: NodeType::Waypoint,
-        })
-        .unwrap();
-        m.add_node(Node {
-            id: NodeId(2),
-            position: [6.0, 0.0, 0.0],
-            node_type: NodeType::Waypoint,
-        })
-        .unwrap();
-        let sp = SpeedProfile {
-            max: 2.5,
-            nominal: 2.0,
-            accel_limit: 1.0,
-            decel_limit: 1.0,
-        };
+        m.add_node(Node { id: NodeId(0), position: [0.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+        m.add_node(Node { id: NodeId(1), position: [3.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+        m.add_node(Node { id: NodeId(2), position: [6.0,0.0,0.0], node_type: NodeType::Waypoint }).unwrap();
+        let sp = SpeedProfile { max: 2.5, nominal: 2.0, accel_limit: 1.0, decel_limit: 1.0 };
         let sf = SafetyProfile { clearance: 0.3 };
         m.add_edge(Edge {
-            id: EdgeId(0),
-            start: NodeId(0),
-            end: NodeId(1),
-            geometry: EdgeGeometry::Line {
-                start: [0.0, 0.0, 0.0],
-                end: [3.0, 0.0, 0.0],
-                length: 3.0,
-            },
-            speed: sp.clone(),
-            safety: sf.clone(),
-        })
-        .unwrap();
+            id: EdgeId(0), start: NodeId(0), end: NodeId(1),
+            geometry: EdgeGeometry::Line { start: [0.0,0.0,0.0], end: [3.0,0.0,0.0], length: 3.0 },
+            speed: sp.clone(), safety: sf.clone(),
+        }).unwrap();
         m.add_edge(Edge {
-            id: EdgeId(1),
-            start: NodeId(1),
-            end: NodeId(2),
-            geometry: EdgeGeometry::Line {
-                start: [3.0, 0.0, 0.0],
-                end: [6.0, 0.0, 0.0],
-                length: 3.0,
-            },
-            speed: sp,
-            safety: sf,
-        })
-        .unwrap();
+            id: EdgeId(1), start: NodeId(1), end: NodeId(2),
+            geometry: EdgeGeometry::Line { start: [3.0,0.0,0.0], end: [6.0,0.0,0.0], length: 3.0 },
+            speed: sp, safety: sf,
+        }).unwrap();
         m
     }
 
@@ -237,7 +185,7 @@ mod tests {
         let path = gbp_map::astar::astar(&map, NodeId(0), NodeId(2)).unwrap();
         let traj = build_trajectory_edges(&map, &path);
         assert_eq!(traj.len(), 2);
-        assert!((traj[0].1 - 3.0).abs() < 1e-5, "edge0 length={}", traj[0].1);
-        assert!((traj[1].1 - 3.0).abs() < 1e-5, "edge1 length={}", traj[1].1);
+        assert!((traj[0].1 - 3.0).abs() < 1e-5);
+        assert!((traj[1].1 - 3.0).abs() < 1e-5);
     }
 }
