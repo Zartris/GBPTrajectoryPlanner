@@ -1,0 +1,86 @@
+//! Spawns a background tokio thread that connects to the simulator WebSocket
+//! and writes received RobotStateMsg values into WsInbox.
+
+use crate::state::WS_INBOX_CAP;
+use std::sync::{Arc, Mutex};
+use std::collections::VecDeque;
+use futures_util::StreamExt;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
+use gbp_comms::RobotStateMsg;
+use tracing::{info, warn, error};
+
+pub fn spawn_ws_client(
+    url: String,
+    inbox: Arc<Mutex<VecDeque<RobotStateMsg>>>,
+) {
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            loop {
+                info!("connecting to {}", url);
+                match connect_async(&url).await {
+                    Ok((mut ws, _)) => {
+                        info!("connected to simulator");
+                        while let Some(msg) = ws.next().await {
+                            match msg {
+                                Ok(Message::Text(json)) => {
+                                    match serde_json::from_str::<RobotStateMsg>(&json) {
+                                        Ok(state) => {
+                                            let mut q = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                                            if q.len() >= WS_INBOX_CAP { q.pop_front(); }
+                                            q.push_back(state);
+                                        }
+                                        Err(e) => warn!("bad msg: {}", e),
+                                    }
+                                }
+                                Ok(Message::Close(_)) => break,
+                                Err(e) => { error!("ws error: {}", e); break; }
+                                _ => {}
+                            }
+                        }
+                        warn!("disconnected, retrying in 1s");
+                    }
+                    Err(e) => {
+                        error!("connect failed: {}, retrying in 1s", e);
+                    }
+                }
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            }
+        });
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use gbp_comms::{RobotStateMsg, RobotSource};
+    use gbp_map::MAX_HORIZON;
+
+    fn minimal_msg() -> RobotStateMsg {
+        RobotStateMsg {
+            robot_id: 1,
+            current_edge: gbp_map::map::EdgeId(0),
+            position_s: 2.5,
+            velocity: 1.8,
+            pos_3d: [2.5, 0.0, 0.0],
+            source: RobotSource::Simulated,
+            belief_means: [0.0; MAX_HORIZON],
+            belief_vars: [0.0; MAX_HORIZON],
+            planned_edges: heapless::Vec::new(),
+            active_factors: heapless::Vec::new(),
+        }
+    }
+
+    #[test]
+    fn deserialize_round_trip() {
+        let msg = minimal_msg();
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let decoded: RobotStateMsg = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.robot_id, 1);
+        assert!((decoded.position_s - 2.5).abs() < 1e-6);
+        assert!((decoded.velocity - 1.8).abs() < 1e-6);
+    }
+}

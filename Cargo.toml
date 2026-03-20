@@ -5,6 +5,8 @@ members = [
     "crates/gbp-core",
     "crates/gbp-comms",
     "crates/gbp-agent",
+    "src/bins/simulator",
+    "src/bins/visualiser",
 ]
 
 [workspace.dependencies]
@@ -13,3 +15,19 @@ postcard   = { version = "1",   default-features = false }
 libm       = { version = "0.2", default-features = false }
 serde      = { version = "1",   default-features = false, features = ["derive"] }
 serde_yaml = { version = "0.9" }
+tokio      = { version = "1",   features = ["full"] }
+axum       = { version = "0.7", features = ["ws"] }
+serde_json = { version = "1" }
+tower      = { version = "0.4" }
+tracing    = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+bevy       = { version = "0.18", default-features = false, features = [
+    "bevy_asset", "bevy_core_pipeline",
+    "bevy_pbr", "bevy_render", "bevy_winit",
+    "bevy_gizmos", "bevy_gizmos_render",
+    "bevy_picking",
+    "tonemapping_luts", "default_font", "x11"
+] }
+bevy_egui          = { version = "0.39" }
+tokio-tungstenite  = { version = "0.24", features = ["native-tls"] }
+futures-util       = { version = "0.3" }

@@ -7,19 +7,23 @@ use gbp_map::map::{EdgeId, NodeId};
 pub type RobotId = u32;
 
 #[derive(Clone, Copy, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GBPTimestep {
     pub eta:    f32,
     pub lambda: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RobotSource { Simulated, Hardware }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ParameterTarget { Global, Robot(RobotId) }
 
 /// Physics -> Agent (in-process only)
 #[derive(Clone, Copy, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ObservationUpdate {
     pub position_s:   f32,
     pub velocity:     f32,
@@ -28,6 +32,7 @@ pub struct ObservationUpdate {
 
 /// Agent -> Agent broadcast (over SimComms or ESP-NOW)
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RobotBroadcast {
     pub robot_id:      RobotId,
     pub current_edge:  EdgeId,
@@ -42,6 +47,7 @@ pub struct RobotBroadcast {
 
 /// Bridge/Simulator -> Visualiser (~20 Hz, JSON over WebSocket)
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RobotStateMsg {
     pub robot_id:       RobotId,
     pub current_edge:   EdgeId,
@@ -57,6 +63,7 @@ pub struct RobotStateMsg {
 
 /// Visualiser -> Bridge/Simulator
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TrajectoryCommand {
     pub robot_id:  RobotId,
     pub goal_node: NodeId,
@@ -64,6 +71,7 @@ pub struct TrajectoryCommand {
 
 /// Visualiser -> Bridge/Simulator -- live parameter update
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ParameterUpdate {
     pub target: ParameterTarget,
     pub key:    heapless::String<32>,

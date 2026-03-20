@@ -15,7 +15,7 @@ crates/
 src/bins/
   simulator/    — Tokio + axum, all agents in-process
   bridge/       — Connects simulator WebSocket ↔ ESP32 UDP
-  visualiser/   — Bevy 0.15 + bevy_egui 0.30, compiles to WASM via trunk
+  visualiser/   — Bevy 0.18 + bevy_egui 0.39, compiles to WASM via trunk
 firmware/       — ESP32-C5 firmware, separate Cargo workspace
 maps/           — YAML map files (test_loop_map.yaml)
 docs/           — adding_a_factor.md, gbp_merge_design.md

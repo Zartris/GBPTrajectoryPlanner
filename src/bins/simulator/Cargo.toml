@@ -1,0 +1,20 @@
+[package]
+name    = "simulator"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "simulator"
+path = "src/main.rs"
+
+[dependencies]
+gbp-comms  = { path = "../../../crates/gbp-comms", features = ["serde"] }
+gbp-map    = { path = "../../../crates/gbp-map", features = ["parse"] }
+heapless   = { workspace = true }
+tokio      = { workspace = true }
+axum       = { workspace = true }
+serde_json = { workspace = true }
+futures-util = { workspace = true }
+tracing    = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap               = { version = "4", features = ["derive"] }
