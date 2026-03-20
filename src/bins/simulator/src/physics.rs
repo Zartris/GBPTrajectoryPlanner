@@ -30,14 +30,12 @@ impl PhysicsState {
         }
     }
 
-    /// Integrate one timestep. Clamps at edge_length and sets edge_done.
+    /// Integrate one timestep. Sets edge_done when position reaches edge end.
     pub fn step(&mut self, dt: f32) {
         let new_s = self.position_s + self.velocity * dt;
-        if new_s >= self.edge_length {
-            self.position_s = self.edge_length;
+        self.position_s = new_s.clamp(0.0, self.edge_length);
+        if self.position_s >= self.edge_length - 0.01 {
             self.edge_done = true;
-        } else {
-            self.position_s = new_s.max(0.0);
         }
     }
 
@@ -95,6 +93,7 @@ mod tests {
             "got {}",
             state.position_s
         );
+        // edge_done triggers when within 0.01m of edge end
         assert!(state.edge_done);
     }
 
@@ -112,19 +111,16 @@ mod tests {
     }
 
     #[test]
-    fn physics_triggers_edge_transition_when_at_end() {
+    fn physics_triggers_edge_done_near_end() {
         let mut state = PhysicsState {
-            position_s: 9.95,
+            position_s: 9.98,
             velocity: 2.0,
             edge_length: 10.0,
             current_edge: EdgeId(0),
             edge_done: false,
         };
         state.step(0.02);
-        // 9.95 + 2.0 * 0.02 = 9.99 -- not yet at 10.0
-        assert!(!state.edge_done);
-        state.step(0.02);
-        // 9.99 + 2.0 * 0.02 = 10.03 -> clamped to 10.0 -> edge_done = true
+        // 9.98 + 2.0*0.02 = 10.02 -> clamped to 10.0, within 0.01m threshold
         assert!(state.edge_done);
     }
 

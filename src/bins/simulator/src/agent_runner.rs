@@ -113,6 +113,12 @@ impl AgentRunner {
         }
     }
 
+    /// Returns the next edge in the trajectory after the given edge, if any.
+    pub fn next_edge_after(&self, current: EdgeId) -> Option<EdgeId> {
+        let pos = self.trajectory_edges.iter().position(|&e| e == current)?;
+        self.trajectory_edges.get(pos + 1).copied()
+    }
+
     /// Returns the agent's planned edge sequence for broadcast in RobotStateMsg.
     pub fn planned_edges_snapshot(&self) -> HVec<EdgeId, { gbp_map::MAX_PATH_EDGES }> {
         self.trajectory_edges.clone()
@@ -136,6 +142,27 @@ pub async fn agent_task(
     let mut ticker = interval(Duration::from_millis(50)); // 20 Hz
     loop {
         ticker.tick().await;
+        let (phys_edge, edge_done) = {
+            let p = physics.lock().unwrap_or_else(|e| e.into_inner());
+            (p.current_edge, p.edge_done)
+        };
+
+        // If physics reached edge end, advance to the next trajectory edge
+        if edge_done {
+            let r = runner.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(next_edge) = r.next_edge_after(phys_edge) {
+                let new_len = map
+                    .edges
+                    .iter()
+                    .find(|e| e.id == next_edge)
+                    .map(|e| e.geometry.length())
+                    .unwrap_or(1.0);
+                let mut p = physics.lock().unwrap_or_else(|e| e.into_inner());
+                p.transition_to(next_edge, new_len);
+                tracing::info!("transition: {:?} -> {:?} (len={:.2}m)", phys_edge, next_edge, new_len);
+            }
+        }
+
         let (pos_s, phys_edge) = {
             let p = physics.lock().unwrap_or_else(|e| e.into_inner());
             (p.position_s, p.current_edge)
@@ -143,17 +170,6 @@ pub async fn agent_task(
 
         let out = { runner.lock().unwrap_or_else(|e| e.into_inner()).step(pos_s, phys_edge) };
 
-        // Drive edge transitions via agent's authoritative current_edge
-        if out.current_edge != phys_edge {
-            let new_len = map
-                .edges
-                .iter()
-                .find(|e| e.id == out.current_edge)
-                .map(|e| e.geometry.length())
-                .unwrap_or(1.0);
-            let mut p = physics.lock().unwrap_or_else(|e| e.into_inner());
-            p.transition_to(out.current_edge, new_len);
-        }
         {
             physics.lock().unwrap_or_else(|e| e.into_inner()).velocity = out.velocity;
         }
