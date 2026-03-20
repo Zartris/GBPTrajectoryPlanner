@@ -16,7 +16,8 @@ const MAX_FACTORS: usize = NUM_DYN_FACTORS + MAX_IR_FACTORS;
 const GBP_ITERATIONS: usize = 15;
 const DT: f32 = 0.1; // seconds per GBP timestep
 const D_SAFE: f32 = 0.3; // minimum clearance (m)
-const SIGMA_R: f32 = 0.5; // inter-robot factor noise (weaker to avoid overwhelming dynamics)
+const SIGMA_R: f32 = 0.15; // inter-robot factor noise — stronger than dynamics (sigma_dyn=0.5)
+                            // precision = 1/0.15^2 ≈ 44 vs dynamics precision = 1/0.5^2 = 4
 
 /// Output of one agent step.
 pub struct StepOutput {
@@ -153,15 +154,13 @@ impl<C: CommsInterface> RobotAgent<C> {
         let s1 = self.graph.variables[1].mean();
         let mut velocity = ((s1 - s0) / DT).max(0.0);
 
-        // 7. Safety: 3D distance-based velocity cap.
+        // 7. Safety monitoring (no override — pure GBP velocity).
+        // The IR factors should produce correct velocity through the graph.
+        // We only track distance for diagnostics and the hard position clamp
+        // in the simulator's agent_task (last resort, shouldn't trigger with tuned GBP).
         let dist_3d = self.min_3d_distance_to_neighbours(&broadcasts);
         if dist_3d <= D_SAFE {
-            velocity = 0.0;
-            self.last_max_position = self.position_s;
-        } else if dist_3d < D_SAFE * 3.0 {
-            let safety_factor = ((dist_3d - D_SAFE) / (D_SAFE * 2.0)).clamp(0.0, 1.0);
-            velocity *= safety_factor;
-            self.last_max_position = f32::MAX;
+            self.last_max_position = self.position_s; // signal to simulator for hard clamp
         } else {
             self.last_max_position = f32::MAX;
         }
@@ -248,9 +247,9 @@ impl<C: CommsInterface> RobotAgent<C> {
             let _ = active_ids.push(bcast.robot_id);
             let activation_range = D_SAFE * 3.0;
 
-            // For EACH variable k, check if our predicted position is close
-            // to the neighbour's predicted position at the same timestep.
-            for k in 0..MAX_HORIZON {
+            // For each variable k (skip k=0 — anchor prior is too strong, factor would
+            // have no effect), check if predicted positions are close enough.
+            for k in 1..MAX_HORIZON {
                 let my_s_k = self.graph.variables[k].mean();
                 let their_s_k = if k < bcast.belief_means.len() {
                     bcast.belief_means[k]
@@ -318,10 +317,10 @@ impl<C: CommsInterface> RobotAgent<C> {
                     irf.jacobian_b = sign;
                     irf.dist = dist;
 
-                    // Set external belief of robot B from its broadcast
-                    if !bcast.belief_means.is_empty() && !bcast.belief_vars.is_empty() {
-                        let ext_mean = bcast.belief_means[0];
-                        let ext_var = bcast.belief_vars[0].max(1e-6);
+                    // Set external belief of robot B at timestep k from its broadcast
+                    if k < bcast.belief_means.len() && k < bcast.belief_vars.len() {
+                        let ext_mean = bcast.belief_means[k];
+                        let ext_var = bcast.belief_vars[k].max(1e-6);
                         irf.ext_lambda_b = 1.0 / ext_var;
                         irf.ext_eta_b = irf.ext_lambda_b * ext_mean;
                     }
