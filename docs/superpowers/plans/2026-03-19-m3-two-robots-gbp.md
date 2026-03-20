@@ -856,3 +856,27 @@ git tag m3-complete
 ```
 
 ---
+
+## Implementation Deviations (actual vs planned)
+
+The following changes were made during implementation to achieve correct GBP negotiation:
+
+### Per-variable IR factors (not per-robot)
+The plan specified one `InterRobotFactor` per neighbour robot. The implementation creates one factor per variable timestep k where predicted positions overlap (up to K=12 per neighbour). `InterRobotFactorSet` was restructured to store `(robot_id, timestep_k, factor_idx)` triples instead of `(robot_id, factor_idx)` pairs. `MAX_FACTORS` was increased from `NUM_DYN_FACTORS + MAX_NEIGHBOURS` to `NUM_DYN_FACTORS + MAX_HORIZON * MAX_NEIGHBOURS`.
+
+### Reactive safety velocity cap
+Pure GBP IR factors alone were insufficient to maintain `d_safe` clearance due to slow convergence and dynamics factor dominance. A reactive safety layer was added in `RobotAgent::step()`:
+- `nearest_ahead_distance()`: finds distance to closest robot ahead
+- `max_position()`: hard position cap at `nearest_ahead_s - d_safe`
+- Velocity scaled linearly from 0 at `d_safe` to full at `3 * d_safe`
+- Physics position clamped at `max_position` to prevent creep
+
+### Factor link visualisation
+The plan showed factor links as lines between robot positions. The implementation draws red lines between **paired variable dots** at the same timestep k, showing exactly which variables are connected by IR factors. Only drawn when paired variables are within 2m.
+
+### Belief tube rendering
+The plan used `eval_position(current_edge, belief_mean)` but belief means are global arc-lengths. The implementation uses `global_s_to_world()` which walks the planned edge sequence to convert global s to 3D positions.
+
+### Tuning
+- `SIGMA_R`: changed from 0.1 to 0.5 to prevent IR factors from overwhelming dynamics
+- IR activation range: `d_safe * 3.0` (not `d_safe * 5.0`) to limit factor count
