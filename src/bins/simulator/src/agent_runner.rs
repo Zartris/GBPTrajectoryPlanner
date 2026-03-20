@@ -83,6 +83,13 @@ impl AgentRunner {
             self.last_reported_edge = Some(current_edge);
         }
 
+        // Compute 3D position BEFORE step so safety cap can use it
+        let pos_3d_map = match self._map.eval_position(current_edge, local_s) {
+            Some(p) => p,
+            None => [0.0, 0.0, 0.0],
+        };
+        self.agent.set_pos_3d(pos_3d_map);
+
         let obs = ObservationUpdate {
             position_s: global_s,
             velocity: 0.0,
@@ -90,11 +97,7 @@ impl AgentRunner {
         };
         let out = self.agent.step(obs);
 
-        // 3D position from the map
-        let pos_3d = match self._map.eval_position(current_edge, local_s) {
-            Some(p) => [p[0], p[2], -p[1]],
-            None => [0.0, 0.0, 0.0],
-        };
+        let pos_3d = [pos_3d_map[0], pos_3d_map[2], -pos_3d_map[1]]; // map -> Bevy coords
 
         // Extract belief means and variances
         let belief_means = self.agent.belief_means();
@@ -169,14 +172,18 @@ pub async fn agent_task(
 
         let out = {
             let mut r = runner.lock().unwrap_or_else(|e| e.into_inner());
+            let t0 = std::time::Instant::now();
             let out = r.step(global_s);
+            let dt_ms = t0.elapsed().as_micros();
+            if dt_ms > 5000 {
+                tracing::warn!("robot {}: step took {}us! ir_factors={}", robot_id, dt_ms, out.active_factor_count);
+            }
             if out.active_factor_count > 0 {
                 tracing::info!(
-                    "robot {}: s={:.3} v={:.3} ir_factors={}",
-                    robot_id, global_s, out.velocity, out.active_factor_count,
+                    "robot {}: s={:.3} v={:.3} ir_factors={} step={}us",
+                    robot_id, global_s, out.velocity, out.active_factor_count, dt_ms,
                 );
             }
-            // Broadcast state after step so other robots can see us
             r.broadcast_state(out.current_edge, global_s);
             out
         };

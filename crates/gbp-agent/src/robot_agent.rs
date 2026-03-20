@@ -102,6 +102,7 @@ impl<C: CommsInterface> RobotAgent<C> {
 
     /// Current belief variances for all K variables.
     pub fn last_max_position(&self) -> f32 { self.last_max_position }
+    pub fn set_pos_3d(&mut self, pos: [f32; 3]) { self.pos_3d = pos; }
 
     pub fn belief_vars(&self) -> [f32; MAX_HORIZON] {
         let mut vars = [0.0f32; MAX_HORIZON];
@@ -118,10 +119,8 @@ impl<C: CommsInterface> RobotAgent<C> {
 
         let map = unsafe { &*self.map };
 
-        // Evaluate 3D position for safety cap and broadcast
-        if let Some(p) = map.eval_position(self.current_edge, self.position_s) {
-            self.pos_3d = p;
-        }
+        // Note: pos_3d is set by AgentRunner from the outside (it knows local_s).
+        // The agent only uses pos_3d for safety cap distance calculations.
 
         // 0. Anchor variable[0] at observed position (strong prior)
         self.graph.variables[0].prior_eta = self.position_s * 1000.0;

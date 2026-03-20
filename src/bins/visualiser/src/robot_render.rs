@@ -236,22 +236,12 @@ fn draw_belief_tubes(
         for (i, &center) in pts.iter().enumerate() {
             let pos = Vec3::from(center) + up;
 
-            // Draw a small dot at each variable's mean position
-            gizmos.sphere(
-                Isometry3d::from_translation(pos),
-                0.05,
-                Color::srgb(r, g, b),
-            );
-
-            // Draw uncertainty circle (radius = sqrt(variance))
-            let radius = belief_tube_radius(state.belief_vars[i]);
-            if radius > 0.01 && radius < 5.0 {
-                gizmos.circle(
-                    Isometry3d::new(pos, Quat::IDENTITY),
-                    radius.min(1.0),
-                    Color::srgba(r, g, b, 0.4),
-                );
-            }
+            let color = Color::srgb(r, g, b);
+            // Draw a small cross at each variable's mean position (cheap, 3 lines)
+            let d = 0.05;
+            gizmos.line(pos - Vec3::X * d, pos + Vec3::X * d, color);
+            gizmos.line(pos - Vec3::Y * d, pos + Vec3::Y * d, color);
+            gizmos.line(pos - Vec3::Z * d, pos + Vec3::Z * d, color);
         }
     }
 }
