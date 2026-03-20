@@ -36,7 +36,7 @@ fn spawn_map_scene(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Ambient light
-    commands.insert_resource(AmbientLight { color: Color::WHITE, brightness: 400.0 });
+    commands.spawn(AmbientLight { color: Color::WHITE, brightness: 400.0, ..default() });
 
     // Camera -- positioned to see the full map
     commands.spawn((
