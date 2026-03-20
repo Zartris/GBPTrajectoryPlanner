@@ -116,11 +116,12 @@ impl AgentRunner {
     }
 
     /// Broadcast this robot's current state so other robots' SimComms can receive it.
-    pub fn broadcast_state(&mut self, current_edge: EdgeId, position_s: f32) {
+    pub fn broadcast_state(&mut self, current_edge: EdgeId, position_s: f32, pos_3d: [f32; 3]) {
         let msg = RobotBroadcast {
             robot_id: self.robot_id,
             current_edge,
             position_s,
+            pos: pos_3d,
             planned_edges: self.planned_edges_snapshot(),
             ..Default::default()
         };
@@ -184,7 +185,12 @@ pub async fn agent_task(
                     robot_id, global_s, out.velocity, out.active_factor_count, dt_ms,
                 );
             }
-            r.broadcast_state(out.current_edge, global_s);
+            // Pass map-coords 3D position so other robots' safety cap sees correct pos
+            let pos_3d_map = match r._map.eval_position(out.current_edge, out.local_s) {
+                Some(p) => p,
+                None => [0.0, 0.0, 0.0],
+            };
+            r.broadcast_state(out.current_edge, global_s, pos_3d_map);
             out
         };
 
@@ -331,7 +337,7 @@ mod tests {
         runner1.set_single_edge_trajectory(EdgeId(0), 5.0);
 
         // Robot 1 broadcasts its state so robot 0 can see it
-        runner1.broadcast_state(EdgeId(0), 4.0);
+        runner1.broadcast_state(EdgeId(0), 4.0, [4.0, 0.0, 0.0]);
 
         // Robot 0 steps — should spawn InterRobotFactor because they share EdgeId(0)
         let out = runner0.step(0.5);
@@ -349,7 +355,7 @@ mod tests {
         runner0.set_single_edge_trajectory(EdgeId(0), 5.0);
         let mut runner1 = AgentRunner::new(comms1, map.clone(), 1);
         runner1.set_single_edge_trajectory(EdgeId(0), 5.0);
-        runner1.broadcast_state(EdgeId(0), 3.5);
+        runner1.broadcast_state(EdgeId(0), 3.5, [3.5, 0.0, 0.0]);
         // Steps with GBP iterate — should not panic
         for s in [0.5_f32, 1.0, 1.5, 2.0] {
             let _ = runner0.step(s);
