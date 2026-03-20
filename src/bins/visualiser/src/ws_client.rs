@@ -1,7 +1,9 @@
 //! Spawns a background tokio thread that connects to the simulator WebSocket
 //! and writes received RobotStateMsg values into WsInbox.
+//! M2: Added Arc<AtomicBool> shutdown flag, checked in reconnect loop.
 
 use crate::state::WS_INBOX_CAP;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
 use futures_util::StreamExt;
@@ -10,10 +12,14 @@ use tokio_tungstenite::tungstenite::Message;
 use gbp_comms::RobotStateMsg;
 use tracing::{info, warn, error};
 
+/// Spawn a background thread running a tokio runtime for WebSocket connection.
+/// Returns a shutdown flag: set it to `true` to stop the reconnect loop.
 pub fn spawn_ws_client(
     url: String,
     inbox: Arc<Mutex<VecDeque<RobotStateMsg>>>,
-) {
+) -> Arc<AtomicBool> {
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = Arc::clone(&shutdown);
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -21,11 +27,18 @@ pub fn spawn_ws_client(
             .unwrap();
         rt.block_on(async move {
             loop {
+                if shutdown_clone.load(Ordering::Relaxed) {
+                    info!("ws_client: shutdown flag set, exiting");
+                    break;
+                }
                 info!("connecting to {}", url);
                 match connect_async(&url).await {
                     Ok((mut ws, _)) => {
                         info!("connected to simulator");
                         while let Some(msg) = ws.next().await {
+                            if shutdown_clone.load(Ordering::Relaxed) {
+                                break;
+                            }
                             match msg {
                                 Ok(Message::Text(json)) => {
                                     match serde_json::from_str::<RobotStateMsg>(&json) {
@@ -42,6 +55,9 @@ pub fn spawn_ws_client(
                                 _ => {}
                             }
                         }
+                        if shutdown_clone.load(Ordering::Relaxed) {
+                            break;
+                        }
                         warn!("disconnected, retrying in 1s");
                     }
                     Err(e) => {
@@ -52,6 +68,7 @@ pub fn spawn_ws_client(
             }
         });
     });
+    shutdown
 }
 
 #[cfg(test)]
@@ -82,5 +99,15 @@ mod tests {
         assert_eq!(decoded.robot_id, 1);
         assert!((decoded.position_s - 2.5).abs() < 1e-6);
         assert!((decoded.velocity - 1.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn shutdown_flag_stops_reconnect() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let flag = Arc::new(AtomicBool::new(false));
+        assert!(!flag.load(Ordering::Relaxed));
+        flag.store(true, Ordering::Relaxed);
+        assert!(flag.load(Ordering::Relaxed));
     }
 }

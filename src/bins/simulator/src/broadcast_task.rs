@@ -1,5 +1,6 @@
 //! Broadcast task for M1: publishes RobotStateMsg at 20 Hz.
 //! Velocity is set directly to v_nom (no GBP -- introduced in M2).
+//! Retained for reference; M2 uses agent_runner::agent_task instead.
 
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
@@ -28,6 +29,7 @@ pub fn build_robot_state_msg(edge_id: EdgeId, position_s: f32, v_nom: f32) -> Ro
 }
 
 /// Runs at 20 Hz. Sets physics velocity to v_nom each cycle and broadcasts position.
+#[allow(dead_code)]
 pub async fn broadcast_task(
     physics: Arc<Mutex<PhysicsState>>,
     edge_id: EdgeId,

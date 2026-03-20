@@ -2,14 +2,17 @@ mod state;
 mod ws_client;
 mod map_scene;
 mod robot_render;
+mod ui;
 
 use std::collections::VecDeque;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
 use state::{MapRes, RobotStates, WsInbox};
 use map_scene::MapScenePlugin;
 use robot_render::RobotRenderPlugin;
+use ui::UiPlugin;
 use tracing_subscriber::EnvFilter;
 
 fn main() {
@@ -26,11 +29,11 @@ fn main() {
     let map = gbp_map::parser::parse_yaml(&yaml)
         .unwrap_or_else(|e| panic!("map parse error: {}", e));
 
-    // Connect WebSocket client
+    // Connect WebSocket client with shutdown flag
     let ws_url = std::env::var("WS_URL")
         .unwrap_or_else(|_| "ws://localhost:3000/ws".to_string());
     let inbox: Arc<Mutex<VecDeque<_>>> = Arc::new(Mutex::new(VecDeque::new()));
-    ws_client::spawn_ws_client(ws_url, Arc::clone(&inbox));
+    let ws_shutdown = ws_client::spawn_ws_client(ws_url, Arc::clone(&inbox));
 
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.1))) // dark blue background
@@ -48,5 +51,11 @@ fn main() {
         .insert_resource(WsInbox(inbox))
         .add_plugins(MapScenePlugin)
         .add_plugins(RobotRenderPlugin)
+        .add_plugins(UiPlugin)
         .run();
+
+    // App::run() blocks until exit. Set the WS shutdown flag so the background
+    // thread stops its reconnect loop and the process can exit cleanly.
+    ws_shutdown.store(true, Ordering::Relaxed);
+    tracing::info!("app exited, WS client shutdown flag set");
 }

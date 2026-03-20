@@ -1067,4 +1067,9 @@ git commit -m "feat(m2): full-route robot — A*, edge transitions, taper, NURBS
 | 1 | SimComms, AgentRunner (RobotAgent::step()), edge transitions, A*, TrajectoryCommand | Unit tests: taper, A* path, edge transitions |
 | 2 | NURBS_EDGE_SAMPLES constant, dashed planned-path gizmo, speed HUD | Visual: robot decelerates + dashed path shown |
 
+## Deferred from M1 PR review (must address in M2)
+
+- [x] **WS client thread lifecycle**: `spawn_ws_client()` returns `Arc<AtomicBool>` shutdown flag checked in the WS reconnect loop; set after `App::run()` returns so the process doesn't hang on shutdown.
+- [ ] **`RobotAgent` raw pointer → `Arc<Map>`**: M2 introduces `AgentRunner` which holds `Arc<Map>` (per plan line 7). Verify the raw `*const Map` in `robot_agent.rs` is no longer used in the simulator path. (Full fix deferred to M7 for firmware `&'static Map`.)
+
 **What M3 adds:** `SimComms` becomes a real in-process broadcast, `update_interrobot_factors()` is implemented, GBP negotiation between two robots, belief tubes and factor lines in the visualiser.

@@ -39,6 +39,7 @@ pub fn node_color(nt: NodeType) -> Color {
     }
 }
 
+#[allow(dead_code)]
 pub fn midpoint(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [(a[0]+b[0])/2.0, (a[1]+b[1])/2.0, (a[2]+b[2])/2.0]
 }
@@ -103,12 +104,14 @@ fn spawn_map_scene(
     }
 }
 
+/// Number of line segments used to render each NURBS edge.
+pub const NURBS_EDGE_SAMPLES: usize = 32;
+
 /// Draw edge gizmo lines each frame (2px wide, bright yellow).
 fn draw_edge_gizmos(
     map: Res<MapRes>,
     mut gizmos: Gizmos,
 ) {
-    const NURBS_SAMPLES: usize = 32;
     let color = Color::srgb(1.0, 1.0, 0.3);
 
     for edge in map.0.edges.iter() {
@@ -120,8 +123,8 @@ fn draw_edge_gizmos(
                 let mut prev = map_to_bevy(
                     gbp_map::nurbs::eval_point(0.0, &n.control_points, &n.knots, n.degree as usize)
                 );
-                for i in 1..=NURBS_SAMPLES {
-                    let t = i as f32 / NURBS_SAMPLES as f32;
+                for i in 1..=NURBS_EDGE_SAMPLES {
+                    let t = i as f32 / NURBS_EDGE_SAMPLES as f32;
                     let p = gbp_map::nurbs::eval_point(t, &n.control_points, &n.knots, n.degree as usize);
                     let cur = map_to_bevy(p);
                     gizmos.line(prev, cur, color);
@@ -135,7 +138,6 @@ fn draw_edge_gizmos(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gbp_map::map::*;
 
     #[test]
     fn edge_midpoints_computed_correctly() {
@@ -153,6 +155,11 @@ mod tests {
         assert!(rgba.red > 0.3 && rgba.red < 0.8);
         assert!((rgba.red - rgba.green).abs() < 0.01);
         assert!((rgba.red - rgba.blue).abs() < 0.01);
+    }
+
+    #[test]
+    fn nurbs_sample_count_is_32() {
+        assert_eq!(NURBS_EDGE_SAMPLES, 32);
     }
 
     #[test]

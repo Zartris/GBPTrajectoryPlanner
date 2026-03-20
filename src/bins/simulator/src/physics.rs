@@ -1,33 +1,33 @@
 // src/bins/simulator/src/physics.rs
 use std::sync::{Arc, Mutex};
 use tokio::time::{interval, Duration};
-use tracing::debug;
 
 /// Shared mutable physics state for one robot.
+/// Uses a single global arc-length `s` across the entire trajectory.
+/// Which edge the robot is on is derived from the trajectory, not tracked here.
 #[derive(Clone, Debug)]
 pub struct PhysicsState {
-    /// Arc-length position along the current edge (m).
+    /// Global arc-length position across the full trajectory (m).
     pub position_s: f32,
-    /// Current commanded velocity (m/s) -- written by broadcast task.
+    /// Current commanded velocity (m/s) — written by agent task.
     pub velocity: f32,
-    /// Length of the current edge (m) -- position wraps to the start when reaching the end.
-    pub edge_length: f32,
+    /// Total path length (m) — sum of all trajectory edge lengths.
+    pub total_length: f32,
 }
 
 impl PhysicsState {
-    pub fn new(edge_length: f32) -> Self {
-        Self { position_s: 0.0, velocity: 0.0, edge_length }
+    pub fn new(total_length: f32) -> Self {
+        Self { position_s: 0.0, velocity: 0.0, total_length }
     }
 
-    /// Integrate one timestep. Wraps with remainder to maintain constant average speed.
+    /// Integrate one timestep. Clamps at total_length (robot stops at goal).
     pub fn step(&mut self, dt: f32) {
-        self.position_s += self.velocity * dt;
-        if self.edge_length > 0.0 && self.position_s >= self.edge_length {
-            self.position_s %= self.edge_length;
-        }
-        if self.position_s < 0.0 {
-            self.position_s = 0.0;
-        }
+        self.position_s = (self.position_s + self.velocity * dt).clamp(0.0, self.total_length);
+    }
+
+    /// Whether the robot has reached the end of the trajectory.
+    pub fn at_goal(&self) -> bool {
+        self.position_s >= self.total_length - 0.01
     }
 }
 
@@ -37,9 +37,7 @@ pub async fn physics_task(state: Arc<Mutex<PhysicsState>>) {
     let mut ticker = interval(Duration::from_millis(20)); // 50 Hz
     loop {
         ticker.tick().await;
-        let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
-        s.step(DT);
-        debug!("physics: s={:.4}", s.position_s);
+        state.lock().unwrap_or_else(|e| e.into_inner()).step(DT);
     }
 }
 
@@ -49,23 +47,35 @@ mod tests {
 
     #[test]
     fn physics_advances_s_by_v_times_dt() {
-        let mut state = PhysicsState { position_s: 0.0, velocity: 2.0, edge_length: 10.0 };
-        state.step(0.02); // 50 Hz -> dt = 0.02 s
+        let mut state = PhysicsState::new(100.0);
+        state.velocity = 2.0;
+        state.step(0.02);
         assert!((state.position_s - 0.04).abs() < 1e-6, "got {}", state.position_s);
     }
 
     #[test]
-    fn physics_wraps_at_edge_length() {
-        let mut state = PhysicsState { position_s: 9.99, velocity: 5.0, edge_length: 10.0 };
+    fn physics_clamps_at_total_length() {
+        let mut state = PhysicsState { position_s: 99.9, velocity: 10.0, total_length: 100.0 };
         state.step(0.02);
-        // 9.99 + 5.0 * 0.02 = 10.09 -> wraps to 10.09 % 10.0 = 0.09
-        assert!((state.position_s - 0.09).abs() < 1e-4, "got {}", state.position_s);
+        assert!((state.position_s - 100.0).abs() < 1e-4, "got {}", state.position_s);
     }
 
     #[test]
     fn physics_zero_velocity_stays_put() {
-        let mut state = PhysicsState { position_s: 3.0, velocity: 0.0, edge_length: 10.0 };
+        let mut state = PhysicsState { position_s: 3.0, velocity: 0.0, total_length: 100.0 };
         state.step(0.02);
         assert!((state.position_s - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn at_goal_when_near_end() {
+        let state = PhysicsState { position_s: 99.995, velocity: 0.0, total_length: 100.0 };
+        assert!(state.at_goal());
+    }
+
+    #[test]
+    fn not_at_goal_when_far() {
+        let state = PhysicsState { position_s: 50.0, velocity: 2.0, total_length: 100.0 };
+        assert!(!state.at_goal());
     }
 }
