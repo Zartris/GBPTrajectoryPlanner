@@ -1,0 +1,21 @@
+[package]
+name    = "visualiser"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "visualiser"
+path = "src/main.rs"
+
+[dependencies]
+gbp-comms  = { path = "../../../crates/gbp-comms", features = ["serde"] }
+gbp-map    = { path = "../../../crates/gbp-map", features = ["parse"] }
+heapless   = { workspace = true }
+bevy       = { workspace = true }
+bevy_egui  = { workspace = true }
+tokio      = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util      = { workspace = true }
+serde_json = { workspace = true }
+tracing    = { workspace = true }
+tracing-subscriber = { workspace = true }
