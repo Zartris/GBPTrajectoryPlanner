@@ -33,6 +33,8 @@ pub struct RobotAgent<C: CommsInterface> {
     ir_set: InterRobotFactorSet,
     position_s:   f32,
     current_edge: EdgeId,
+    /// Maximum allowed position (from safety cap). f32::MAX if unconstrained.
+    last_max_position: f32,
 }
 
 // SAFETY: Map pointer is valid for the lifetime of the agent.
@@ -62,6 +64,7 @@ impl<C: CommsInterface> RobotAgent<C> {
             ir_set: InterRobotFactorSet::new(),
             position_s: 0.0,
             current_edge: EdgeId(0),
+            last_max_position: f32::MAX,
         }
     }
 
@@ -90,6 +93,8 @@ impl<C: CommsInterface> RobotAgent<C> {
     }
 
     /// Current belief variances for all K variables.
+    pub fn last_max_position(&self) -> f32 { self.last_max_position }
+
     pub fn belief_vars(&self) -> [f32; MAX_HORIZON] {
         let mut vars = [0.0f32; MAX_HORIZON];
         for (i, v) in self.graph.variables.iter().enumerate() {
@@ -131,14 +136,17 @@ impl<C: CommsInterface> RobotAgent<C> {
         let s1 = self.graph.variables[1].mean();
         let mut velocity = ((s1 - s0) / DT).max(0.0);
 
-        // 7. Safety velocity cap: if a neighbour is close, limit velocity to maintain clearance.
-        // This is a reactive safety layer on top of GBP — ensures d_safe is never violated
-        // even when GBP messages haven't fully converged.
-        let min_neighbour_dist = self.min_neighbour_distance(&broadcasts);
-        if min_neighbour_dist < D_SAFE * 3.0 {
-            // Scale velocity down as distance approaches d_safe
-            let safety_factor = ((min_neighbour_dist - D_SAFE) / (D_SAFE * 2.0)).clamp(0.0, 1.0);
-            velocity = velocity * safety_factor;
+        // 7. Safety: hard position cap — never advance past (nearest_ahead - d_safe)
+        let max_s = self.max_position(&broadcasts);
+        self.last_max_position = max_s;
+        if max_s < f32::MAX {
+            let remaining = max_s - self.position_s;
+            if remaining <= 0.0 {
+                velocity = 0.0;
+            } else if remaining < D_SAFE * 2.0 {
+                let safety_factor = (remaining / (D_SAFE * 2.0)).clamp(0.0, 1.0);
+                velocity *= safety_factor;
+            }
         }
 
         // 8. Broadcast state
@@ -147,15 +155,35 @@ impl<C: CommsInterface> RobotAgent<C> {
         StepOutput { velocity, position_s: self.position_s, current_edge: self.current_edge }
     }
 
-    /// Find the minimum distance to any neighbour robot (from broadcasts).
-    fn min_neighbour_distance(&self, broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>) -> f32 {
-        let mut min_dist = f32::MAX;
+    /// Find the distance to the nearest robot AHEAD of us on the trajectory.
+    /// Returns f32::MAX if no robot is ahead.
+    fn nearest_ahead_distance(&self, broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>) -> f32 {
+        let mut min_ahead = f32::MAX;
         for bcast in broadcasts.iter() {
             if bcast.robot_id == self.robot_id { continue; }
-            let dist = (self.position_s - bcast.position_s).abs();
-            if dist < min_dist { min_dist = dist; }
+            let gap = bcast.position_s - self.position_s; // positive = ahead
+            if gap > -D_SAFE && gap < min_ahead {
+                // Include robots slightly behind us too (within d_safe) to prevent
+                // position overshoot from one-tick lag
+                min_ahead = gap;
+            }
         }
-        min_dist
+        min_ahead
+    }
+
+    /// Maximum position we can advance to, given robots strictly ahead of us.
+    /// Returns f32::MAX if unconstrained.
+    fn max_position(&self, broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>) -> f32 {
+        let mut limit = f32::MAX;
+        for bcast in broadcasts.iter() {
+            if bcast.robot_id == self.robot_id { continue; }
+            // Only consider robots ahead of us (positive gap)
+            if bcast.position_s > self.position_s {
+                let cap = bcast.position_s - D_SAFE;
+                if cap < limit { limit = cap; }
+            }
+        }
+        limit
     }
 
     fn update_dynamics_v_nom(&mut self, map: &Map) {

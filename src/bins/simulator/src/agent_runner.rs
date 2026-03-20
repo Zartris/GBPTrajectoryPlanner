@@ -108,6 +108,7 @@ impl AgentRunner {
             active_factor_count: self.agent.interrobot_factor_count(),
             belief_means,
             belief_vars,
+            max_position: self.agent.last_max_position(),
         }
     }
 
@@ -150,6 +151,7 @@ pub struct StepOut {
     pub active_factor_count: usize,
     pub belief_means: [f32; MAX_HORIZON],
     pub belief_vars: [f32; MAX_HORIZON],
+    pub max_position: f32,
 }
 
 /// Runs at 20 Hz: reads global position, steps agent, writes velocity back.
@@ -168,17 +170,26 @@ pub async fn agent_task(
         let out = {
             let mut r = runner.lock().unwrap_or_else(|e| e.into_inner());
             let out = r.step(global_s);
-            tracing::debug!(
-                "robot {}: s={:.3} v={:.3} ir={} beliefs=[{:.2},{:.2},{:.2}]",
-                robot_id, global_s, out.velocity, out.active_factor_count,
-                out.belief_means[0], out.belief_means[1], out.belief_means[2]
-            );
+            if out.active_factor_count > 0 {
+                tracing::info!(
+                    "robot {}: s={:.3} v={:.3} ir_factors={}",
+                    robot_id, global_s, out.velocity, out.active_factor_count,
+                );
+            }
             // Broadcast state after step so other robots can see us
             r.broadcast_state(out.current_edge, global_s);
             out
         };
 
-        physics.lock().unwrap_or_else(|e| e.into_inner()).velocity = out.velocity;
+        {
+            let mut p = physics.lock().unwrap_or_else(|e| e.into_inner());
+            p.velocity = out.velocity;
+            // Hard position clamp: if we've crept past max_position, snap back
+            if out.max_position < f32::MAX && p.position_s > out.max_position {
+                p.position_s = out.max_position;
+                p.velocity = 0.0;
+            }
+        }
 
         let planned_edges = runner.lock().unwrap_or_else(|e| e.into_inner()).planned_edge_ids();
 
