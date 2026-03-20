@@ -58,14 +58,6 @@ impl RobotState {
         self.active_factor_count = msg.ir_factor_count as usize;
     }
 
-    /// Global arc-length of this robot (cumulative position along full trajectory).
-    /// Computed from planned_edges + position_s for belief tube rendering.
-    pub fn global_s_estimate(&self) -> f32 {
-        // position_s in the message is edge-local. We don't have
-        // cumulative offset, so this is approximate. The belief means
-        // from the GBP agent are already global arc-lengths.
-        0.0 // Belief means are used directly as global s values
-    }
 }
 
 /// Bevy resource: latest known state per robot, keyed by robot_id.

@@ -284,7 +284,7 @@ fn draw_factor_links(
                 let b = robot_pts[j].1[k];
                 let dist = (a - b).length();
                 // Only draw if the variables are close enough to have an active factor
-                if dist < 2.0 {
+                if dist < 1.0 {
                     gizmos.line(a, b, Color::srgba(1.0, 0.2, 0.2, 0.6));
                 }
             }

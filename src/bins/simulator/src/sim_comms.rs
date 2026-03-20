@@ -31,6 +31,7 @@ impl CommsInterface for SimComms {
         loop {
             match self.rx.try_recv() {
                 Ok(msg) => { let _ = out.push(msg); }
+                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
                 Err(_) => break,
             }
         }
