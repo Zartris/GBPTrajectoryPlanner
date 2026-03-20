@@ -24,6 +24,9 @@ struct Args {
     /// Address to bind the WebSocket server
     #[arg(long, default_value = "0.0.0.0:3000")]
     bind: String,
+    /// Scenario: "follow" (same route) or "merge" (different routes converging)
+    #[arg(long, default_value = "follow")]
+    scenario: String,
 }
 
 /// Convert A* edge path to (EdgeId, length) pairs.
@@ -58,63 +61,91 @@ async fn main() {
     let map = gbp_map::parser::parse_yaml(&yaml)
         .unwrap_or_else(|e| panic!("map parse error: {}", e));
 
-    let start_node = map.edges.first().expect("map has no edges").start;
-    let goal_node = map.nodes.last().expect("map has no nodes").id;
+    let default_start = map.edges.first().expect("map has no edges").start;
+    let default_goal = map.nodes.last().expect("map has no nodes").id;
 
     let map_arc = Arc::new(map);
+
+    // Determine start/goal per robot based on scenario
+    let (start0, goal0, start1, goal1) = if args.scenario == "merge" {
+        // Find an alternate start node whose A* route differs initially but shares edges later
+        let mut alt_start = default_start;
+        let default_path = gbp_map::astar::astar(&map_arc, default_start, default_goal);
+        for node in map_arc.nodes.iter() {
+            if node.id == default_start { continue; }
+            if let Some(alt_path) = gbp_map::astar::astar(&map_arc, node.id, default_goal) {
+                if let Some(ref dp) = default_path {
+                    // Different first edge but shares at least one later edge
+                    if !alt_path.is_empty() && !dp.is_empty()
+                        && alt_path[0] != dp[0]
+                        && alt_path.iter().any(|e| dp.contains(e))
+                    {
+                        alt_start = node.id;
+                        info!("merge scenario: alternate start {:?} (default {:?})", alt_start, default_start);
+                        break;
+                    }
+                }
+            }
+        }
+        if alt_start == default_start {
+            info!("merge scenario: no alternate start found, falling back to follow");
+        }
+        (default_start, default_goal, alt_start, default_goal)
+    } else {
+        (default_start, default_goal, default_start, default_goal)
+    };
+
+    info!("scenario={}, robot0: {:?}->{:?}, robot1: {:?}->{:?}",
+        args.scenario, start0, goal0, start1, goal1);
 
     // Channels
     let (tx_state, _): (broadcast::Sender<RobotStateMsg>, _) = broadcast::channel(16);
     let (tx_json, _): (broadcast::Sender<String>, _) = broadcast::channel(16);
     let (cmd_tx, mut cmd_rx): (mpsc::Sender<String>, _) = mpsc::channel(8);
 
-    // Create shared broadcast channel for inter-robot messages
     let (bcast_tx, bcast_rx0) = broadcast::channel::<RobotBroadcast>(64);
     let bcast_rx1 = bcast_tx.subscribe();
 
-    // Robot 0: starts at s=0
+    // Robot 0
     let (runner0, total_length0) = {
         let comms0 = SimComms::new(bcast_tx.clone(), bcast_rx0);
         let mut r = AgentRunner::new(comms0, map_arc.clone(), 0);
-        let total = if let Some(path) = gbp_map::astar::astar(&map_arc, start_node, goal_node) {
+        let total = if let Some(path) = gbp_map::astar::astar(&map_arc, start0, goal0) {
             let traj = build_trajectory_edges(&map_arc, &path);
-            info!("Robot 0: A* path: {} edges, start={:?} goal={:?}", traj.len(), start_node, goal_node);
+            info!("Robot 0: {} edges, {:.2}m", traj.len(), traj.iter().map(|(_, l)| l).sum::<f32>());
             r.set_trajectory(traj)
         } else {
-            info!("Robot 0: no A* path found, using single edge");
-            let first_edge = map_arc.edges.first().unwrap();
-            let mut traj = HVec::new();
-            let _ = traj.push((first_edge.id, first_edge.geometry.length()));
-            r.set_trajectory(traj)
+            info!("Robot 0: no path");
+            let e = map_arc.edges.first().unwrap();
+            let mut t = HVec::new();
+            let _ = t.push((e.id, e.geometry.length()));
+            r.set_trajectory(t)
         };
         (Arc::new(Mutex::new(r)), total)
     };
 
-    // Robot 1: starts behind robot 0 (at s offset ~1.0)
+    // Robot 1
     let (runner1, total_length1) = {
         let comms1 = SimComms::new(bcast_tx.clone(), bcast_rx1);
         let mut r = AgentRunner::new(comms1, map_arc.clone(), 1);
-        let total = if let Some(path) = gbp_map::astar::astar(&map_arc, start_node, goal_node) {
+        let total = if let Some(path) = gbp_map::astar::astar(&map_arc, start1, goal1) {
             let traj = build_trajectory_edges(&map_arc, &path);
-            info!("Robot 1: A* path: {} edges, start={:?} goal={:?}", traj.len(), start_node, goal_node);
+            info!("Robot 1: {} edges, {:.2}m", traj.len(), traj.iter().map(|(_, l)| l).sum::<f32>());
             r.set_trajectory(traj)
         } else {
-            info!("Robot 1: no A* path found, using single edge");
-            let first_edge = map_arc.edges.first().unwrap();
-            let mut traj = HVec::new();
-            let _ = traj.push((first_edge.id, first_edge.geometry.length()));
-            r.set_trajectory(traj)
+            info!("Robot 1: no path");
+            let e = map_arc.edges.first().unwrap();
+            let mut t = HVec::new();
+            let _ = t.push((e.id, e.geometry.length()));
+            r.set_trajectory(t)
         };
         (Arc::new(Mutex::new(r)), total)
     };
 
-    info!("Robot 0: total trajectory length: {:.2}m", total_length0);
-    info!("Robot 1: total trajectory length: {:.2}m", total_length1);
-
     let physics0 = Arc::new(Mutex::new(PhysicsState::new(total_length0)));
-    // Robot 0 starts at s=0.2 (just ahead)
-    physics0.lock().unwrap().position_s = 0.2;
-
+    if start0 == start1 {
+        physics0.lock().unwrap().position_s = 0.2; // slight head start in follow mode
+    }
     let physics1 = Arc::new(Mutex::new(PhysicsState::new(total_length1)));
     // Robot 1 starts at s=0.0 — only 0.2m behind, violating d_safe=0.3 clearance
 
