@@ -72,9 +72,8 @@ pub fn dashed_segment_pairs(pts: &[[f32; 3]]) -> heapless::Vec<([f32; 3], [f32; 
     pairs
 }
 
-/// Number of samples per edge for the planned-path dashed gizmo.
-/// Uses 8 (not NURBS_EDGE_SAMPLES=32) to produce visible gaps.
-pub const PLANNED_PATH_GIZMO_SAMPLES: usize = 8;
+/// Target dash length in meters. Gaps are the same length.
+pub const DASH_LENGTH: f32 = 0.3;
 
 fn spawn_robot_arrow(
     mut commands: Commands,
@@ -127,18 +126,35 @@ fn update_robot_transforms(
     }
 }
 
-/// Draw dashed lines along each robot's planned edges.
+/// Draw dashed lines along the remaining planned path (from current edge onward).
+/// Offset slightly upward (+Y in Bevy) so they're visible above the yellow edge lines.
 fn draw_planned_path(
     map: Res<MapRes>,
     states: Res<RobotStates>,
     mut gizmos: Gizmos,
 ) {
+    let color = Color::srgb(0.1, 1.0, 0.3);
+    let up = Vec3::new(0.0, 0.08, 0.0); // slight vertical offset above edge lines
+
     for state in states.0.values() {
-        let color = Color::srgba(0.3, 0.8, 1.0, 0.6);
+        // Skip edges before the current one — only show remaining path
+        let current = state.current_edge;
+        let mut found_current = false;
         for &edge_id in state.planned_edges.iter() {
-            let pts = edge_sample_points(&map.0, edge_id, PLANNED_PATH_GIZMO_SAMPLES);
+            if edge_id == current {
+                found_current = true;
+            }
+            if !found_current {
+                continue;
+            }
+            // Compute sample count from edge length so dashes are a consistent size
+            let edge_len = map.0.edge_index(edge_id)
+                .map(|i| map.0.edges[i].geometry.length())
+                .unwrap_or(1.0);
+            let n_samples = ((edge_len / DASH_LENGTH) as usize).clamp(4, 64);
+            let pts = edge_sample_points(&map.0, edge_id, n_samples);
             for (a, b) in dashed_segment_pairs(&pts) {
-                gizmos.line(Vec3::from(a), Vec3::from(b), color);
+                gizmos.line(Vec3::from(a) + up, Vec3::from(b) + up, color);
             }
         }
     }

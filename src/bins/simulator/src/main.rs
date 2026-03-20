@@ -122,10 +122,13 @@ async fn main() {
                 let global_s = phys_cmd.lock().unwrap_or_else(|e| e.into_inner()).position_s;
                 // Find which node we're near
                 let (cur_edge, _) = runner_cmd.lock().unwrap_or_else(|e| e.into_inner()).edge_at_s(global_s);
-                let from_node = map_cmd.edges.iter()
-                    .find(|e| e.id == cur_edge)
-                    .map(|e| e.start)
-                    .unwrap_or(NodeId(0));
+                let from_node = match map_cmd.edges.iter().find(|e| e.id == cur_edge).map(|e| e.start) {
+                    Some(node) => node,
+                    None => {
+                        tracing::warn!("command handler: edge {:?} not in map, ignoring", cur_edge);
+                        continue;
+                    }
+                };
                 if let Some(path) = gbp_map::astar::astar(&map_cmd, from_node, cmd.goal_node) {
                     let traj = build_trajectory_edges(&map_cmd, &path);
                     let mut r = runner_cmd.lock().unwrap_or_else(|e| e.into_inner());

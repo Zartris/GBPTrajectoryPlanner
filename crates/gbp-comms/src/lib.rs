@@ -1,7 +1,7 @@
 #![no_std]
 
 use heapless::Vec;
-use gbp_map::{MAX_HORIZON, MAX_NEIGHBOURS};
+use gbp_map::{MAX_HORIZON, MAX_NEIGHBOURS, MAX_PATH_EDGES};
 use gbp_map::map::{EdgeId, NodeId};
 
 pub type RobotId = u32;
@@ -57,7 +57,7 @@ pub struct RobotStateMsg {
     pub source:         RobotSource,
     pub belief_means:   [f32; MAX_HORIZON],
     pub belief_vars:    [f32; MAX_HORIZON],
-    pub planned_edges:  Vec<EdgeId, MAX_HORIZON>,
+    pub planned_edges:  Vec<EdgeId, MAX_PATH_EDGES>,
     pub active_factors: Vec<RobotId, MAX_NEIGHBOURS>,
 }
 
