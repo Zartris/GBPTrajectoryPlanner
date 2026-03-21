@@ -1,5 +1,42 @@
 # GBP Trajectory Planner — System Configuration
 # All values shown are defaults. Remove or comment out lines to use defaults.
+#
+# Reference: Patwardhan et al., IEEE RA-L 2023 (GBP for multi-robot coordination)
+# BIPM barrier: arxiv.org/abs/2506.14341
+
+# ─── GBP Solver ───────────────────────────────────────────────────────────────
+# Core parameters for the Gaussian Belief Propagation factor graph solver.
+# The solver iterates message passing between factors and variables to find
+# a consensus velocity trajectory that satisfies all constraints.
+#
+# msg_damping      — Damping applied to factor→variable messages (0.0–1.0).
+#                    1.0 = no damping (use new message as-is).
+#                    0.5 = average old and new messages (recommended for loopy graphs).
+#                    Lower values improve stability but slow convergence.
+#
+# internal_iters   — Number of internal iterations per external round.
+#                    Internal = dynamics + velocity bound factors only (single-robot).
+#                    More internal iters let the robot's own trajectory converge
+#                    before incorporating inter-robot messages.
+#
+# external_iters   — Number of external iteration rounds.
+#                    External = inter-robot factors included.
+#                    Total message passes ≈ (internal+1) × external.
+#                    More external iters improve multi-robot coordination quality
+#                    at the cost of compute time per tick.
+#
+# timestep         — Seconds between GBP planning horizon variables (s).
+#                    With K=12 variables and timestep=0.1, the planner looks 1.2s ahead.
+#                    Larger values = longer horizon but coarser resolution.
+#
+# init_variance    — Initial uncertainty for each variable in the factor graph.
+#                    Large values (100+) mean "no prior knowledge about position."
+#                    The solver converges from this wide prior to the solution.
+#
+# anchor_precision — Precision (inverse variance) of the position anchor on variable[0].
+#                    This pins the first variable to the robot's current observed position.
+#                    Higher values = stronger anchor = less drift from observation.
+#                    Too high can cause numerical issues; 1000 works well in practice.
 
 [gbp]
 msg_damping      = 0.5
@@ -9,8 +46,49 @@ timestep         = 0.1
 init_variance    = 100.0
 anchor_precision = 1000.0
 
+# ─── Dynamics Factor ──────────────────────────────────────────────────────────
+# The dynamics factor encodes "adjacent timesteps should be consistent with
+# constant-velocity motion." It acts as a velocity prior — the robot tries to
+# maintain a smooth trajectory rather than jumping between positions.
+#
+# sigma — Noise standard deviation of the dynamics factor.
+#         Lower sigma = higher precision = stronger smoothing between timesteps.
+#         Higher sigma = weaker coupling = more freedom for other factors to pull.
+#         At sigma=0.5, dynamics precision ≈ 4, which balances against IR factor
+#         precision ≈ 69 (at sigma=0.12).
+
 [gbp.dynamics]
 sigma = 0.5
+
+# ─── Inter-Robot Factor ───────────────────────────────────────────────────────
+# Inter-robot (IR) factors enforce collision avoidance between robots that share
+# planned edges. They create a repulsive "force" when robots are too close.
+# Uses exponential decay precision: full precision inside d_safe, decaying
+# smoothly to zero beyond it.
+#
+# d_safe           — Minimum safe center-to-center distance (m).
+#                    Should be >= chassis length (1.15m) + margin.
+#                    Inside this distance, IR factor is at full precision.
+#
+# sigma            — IR factor noise std dev. Controls the "strength" of avoidance.
+#                    Precision = 1/sigma². At sigma=0.12, precision ≈ 69.
+#                    Lower sigma = stronger avoidance push but more aggressive braking.
+#                    Must be balanced against dynamics sigma to avoid overshoot.
+#
+# activation_range — Distance (m) at which IR factors are spawned/despawned.
+#                    Robots beyond this range don't interact at all.
+#                    Should be > d_safe. Typical: 2–3× d_safe.
+#
+# decay_alpha      — Exponential decay rate for IR precision beyond d_safe.
+#                    Higher alpha = faster decay = less influence at distance.
+#                    At alpha=3.0 and d_safe=1.3: precision is ~2% at 2×d_safe (2.6m).
+#
+# front_damping    — Asymmetric Jacobian dampening for the front robot (0.0–1.0).
+#                    When two robots approach, the behind robot gets full IR push
+#                    but the front robot's push is multiplied by this factor.
+#                    0.0 = front robot ignores the behind robot entirely.
+#                    1.0 = symmetric (both push equally).
+#                    0.3 = front robot reacts at 30% strength (lets behind robot yield).
 
 [gbp.interrobot]
 d_safe           = 1.3
@@ -19,12 +97,58 @@ activation_range = 3.0
 decay_alpha      = 3.0
 front_damping    = 0.3
 
+# ─── Velocity Bound Factor (BIPM-inspired) ───────────────────────────────────
+# Soft velocity constraints using a Barrier Interior Point Method approach.
+# Creates an adaptive precision "wall" near velocity limits that smoothly
+# increases as the robot approaches the boundary, preventing hard constraint
+# violations without discontinuities.
+#
+# v_min         — Minimum allowed velocity (m/s). Negative = allow slow reverse.
+#                 -0.3 allows creep-back for merge overshoot recovery.
+#                 Set to 0.0 to prevent any backwards motion.
+#
+# v_max_default — Default maximum forward velocity (m/s).
+#                 Overridden per-edge by the map's speed profile (edge.speed.max).
+#                 This is the fallback when no edge speed is available.
+#
+# kappa         — Barrier steepness. Higher = sharper transition from free to blocked.
+#                 Precision = 1/(kappa × g²) where g is distance to constraint.
+#                 Too high can cause oscillation; too low gives weak enforcement.
+#
+# margin        — Distance from the velocity limit (m/s) where the barrier activates.
+#                 Within this margin, precision ramps from 0 to max_precision.
+#                 Outside the margin, the factor is inactive (zero precision).
+#
+# max_precision — Hard cap on barrier precision at the constraint boundary.
+#                 Prevents numerical explosion when g→0.
+#                 Higher = harder wall but risk of numerical issues.
+
 [gbp.velocity_bound]
 v_min         = -0.3
 v_max_default = 2.5
 kappa         = 10.0
 margin        = 1.0
 max_precision = 100.0
+
+# ─── Robot Physical Constraints ───────────────────────────────────────────────
+# Post-GBP dynamic constraints applied AFTER the factor graph solves.
+# GBP produces a raw velocity from the trajectory. These limits ensure
+# the commanded velocity is physically feasible (smooth acceleration,
+# bounded speed). Applied at 50 Hz in the agent tick loop.
+#
+# max_accel — Maximum acceleration magnitude (m/s²).
+#             Limits how fast the robot can speed up or slow down per tick.
+#
+# max_jerk  — Maximum jerk = rate of acceleration change (m/s³).
+#             Smooths acceleration transitions to prevent mechanical stress.
+#             Lower values = smoother but slower response to GBP commands.
+#
+# max_speed — Absolute speed cap (m/s). Hard upper limit regardless of GBP output.
+#             Typically matches the robot hardware limit.
+#
+# v_min     — Minimum velocity for the post-GBP clamp (m/s).
+#             Should match [gbp.velocity_bound].v_min for consistency.
+#             Both the BIPM barrier and this clamp enforce the same lower bound.
 
 [robot]
 max_accel = 2.5
