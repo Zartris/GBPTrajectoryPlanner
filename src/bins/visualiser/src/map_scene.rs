@@ -2,7 +2,7 @@
 use bevy::prelude::*;
 use bevy::gizmos::config::{GizmoConfigStore, DefaultGizmoConfigGroup, GizmoLineConfig};
 use gbp_map::map::{EdgeGeometry, EdgeId, NodeType};
-use crate::state::MapRes;
+use crate::state::{DrawConfig, MapRes};
 
 /// Cached polylines for each edge — computed once at startup, drawn every frame.
 #[derive(Resource)]
@@ -61,6 +61,7 @@ pub fn midpoint(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 fn spawn_map_scene(
     mut commands: Commands,
     map: Res<MapRes>,
+    draw: Res<DrawConfig>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -96,6 +97,8 @@ fn spawn_map_scene(
         Transform::from_xyz(center.x, span * 1.2, center.z + span * 0.8)
             .looking_at(center, Vec3::Y),
     ));
+
+    if !draw.node_spheres { return; }
 
     // Node spheres with emissive glow
     let sphere_mesh = meshes.add(Sphere::new(0.2).mesh().ico(2).unwrap());
@@ -145,8 +148,10 @@ fn build_edge_polylines(
 fn draw_edge_gizmos(
     polylines: Option<Res<EdgePolylines>>,
     map: Res<MapRes>,
+    draw: Res<DrawConfig>,
     mut gizmos: Gizmos,
 ) {
+    if !draw.edge_lines { return; }
     let color = Color::srgb(1.0, 1.0, 0.3);
 
     if let Some(cache) = polylines {
@@ -184,6 +189,7 @@ fn draw_edge_gizmos(
 fn spawn_environment_stl(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    draw: Res<DrawConfig>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // STL models are Z-up (CAD convention), Bevy is Y-up.
@@ -195,26 +201,31 @@ fn spawn_environment_stl(
     };
 
     // Physical track — grey (opaque for performance: 56K tris)
-    commands.spawn((
-        Mesh3d(asset_server.load(PHYSICAL_TRACK_STL)),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.45, 0.45, 0.45),
-            ..default()
-        })),
-        stl_transform,
-    ));
+    if draw.physical_track {
+        commands.spawn((
+            Mesh3d(asset_server.load(PHYSICAL_TRACK_STL)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.45, 0.45, 0.45),
+                ..default()
+            })),
+            stl_transform,
+        ));
+    }
 
     // Magnetic mainlines — dark blue (opaque for performance: 86K tris)
-    commands.spawn((
-        Mesh3d(asset_server.load(MAGNETIC_MAINLINES_STL)),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.1, 0.1, 0.7),
-            ..default()
-        })),
-        stl_transform,
-    ));
+    if draw.magnetic_mainlines {
+        commands.spawn((
+            Mesh3d(asset_server.load(MAGNETIC_MAINLINES_STL)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.1, 0.1, 0.7),
+                ..default()
+            })),
+            stl_transform,
+        ));
+    }
 
     // Magnetic markers — yellow
+    if draw.magnetic_markers {
     commands.spawn((
         Mesh3d(asset_server.load(MAGNETIC_MARKERS_STL)),
         MeshMaterial3d(materials.add(StandardMaterial {
@@ -223,6 +234,7 @@ fn spawn_environment_stl(
         })),
         stl_transform,
     ));
+    } // magnetic_markers
 }
 
 #[cfg(test)]

@@ -9,17 +9,71 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
-use state::{MapRes, RobotStates, WsInbox, WsOutbox};
+use serde::Deserialize;
+use state::{DrawConfig, MapRes, RobotStates, WsInbox, WsOutbox};
 use map_scene::MapScenePlugin;
 use robot_render::RobotRenderPlugin;
 use ui::UiPlugin;
 use tracing_subscriber::EnvFilter;
+
+/// TOML structure for the [visualisation.draw] section.
+#[derive(Deserialize, Default)]
+struct VisConfig {
+    #[serde(default)]
+    visualisation: VisSection,
+}
+
+#[derive(Deserialize, Default)]
+struct VisSection {
+    #[serde(default)]
+    draw: DrawToml,
+}
+
+#[derive(Deserialize, Default)]
+struct DrawToml {
+    physical_track: Option<bool>,
+    magnetic_mainlines: Option<bool>,
+    magnetic_markers: Option<bool>,
+    node_spheres: Option<bool>,
+    edge_lines: Option<bool>,
+    robots: Option<bool>,
+    planned_paths: Option<bool>,
+    belief_tubes: Option<bool>,
+    factor_links: Option<bool>,
+}
+
+impl From<DrawToml> for DrawConfig {
+    fn from(t: DrawToml) -> Self {
+        let d = DrawConfig::default();
+        DrawConfig {
+            physical_track: t.physical_track.unwrap_or(d.physical_track),
+            magnetic_mainlines: t.magnetic_mainlines.unwrap_or(d.magnetic_mainlines),
+            magnetic_markers: t.magnetic_markers.unwrap_or(d.magnetic_markers),
+            node_spheres: t.node_spheres.unwrap_or(d.node_spheres),
+            edge_lines: t.edge_lines.unwrap_or(d.edge_lines),
+            robots: t.robots.unwrap_or(d.robots),
+            planned_paths: t.planned_paths.unwrap_or(d.planned_paths),
+            belief_tubes: t.belief_tubes.unwrap_or(d.belief_tubes),
+            factor_links: t.factor_links.unwrap_or(d.factor_links),
+        }
+    }
+}
 
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env()
             .add_directive("visualiser=info".parse().unwrap()))
         .init();
+
+    // Load draw config from the same config.toml the simulator uses
+    let config_path = std::env::var("CONFIG_PATH")
+        .unwrap_or_else(|_| "config/config.toml".to_string());
+    let draw_config = if let Ok(toml_str) = std::fs::read_to_string(&config_path) {
+        let vc: VisConfig = toml::from_str(&toml_str).unwrap_or_default();
+        DrawConfig::from(vc.visualisation.draw)
+    } else {
+        DrawConfig::default()
+    };
 
     // Load map (default path or from env)
     let map_path = std::env::var("MAP_PATH")
@@ -59,6 +113,7 @@ fn main() {
         // transform propagation skipping for unchanged entities.
         .insert_resource(bevy::transform::StaticTransformOptimizations::enabled())
         .insert_resource(MapRes(map))
+        .insert_resource(draw_config)
         .insert_resource(RobotStates::default())
         .insert_resource(WsInbox(inbox))
         .insert_resource(WsOutbox(outbox))

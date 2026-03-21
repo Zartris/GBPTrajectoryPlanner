@@ -2,7 +2,7 @@
 use bevy::prelude::*;
 use gbp_map::map::{Map, EdgeId};
 use gbp_map::MAX_HORIZON;
-use crate::state::{MapRes, RobotState, RobotStates, WsInbox};
+use crate::state::{DrawConfig, MapRes, RobotState, RobotStates, WsInbox};
 use crate::ui::SimPaused;
 use tracing::warn;
 
@@ -144,7 +144,9 @@ fn spawn_new_robot_meshes(
     mut materials: ResMut<Assets<StandardMaterial>>,
     states: Res<RobotStates>,
     query: Query<&RobotArrow>,
+    draw: Res<DrawConfig>,
 ) {
+    if !draw.robots { return; }
     let existing: std::vec::Vec<u32> = query.iter().map(|a| a.robot_id).collect();
 
     for &id in states.0.keys() {
@@ -206,8 +208,10 @@ fn update_robot_transforms(
 fn draw_planned_path(
     map: Res<MapRes>,
     states: Res<RobotStates>,
+    draw: Res<DrawConfig>,
     mut gizmos: Gizmos,
 ) {
+    if !draw.planned_paths { return; }
     let color = Color::srgb(0.1, 1.0, 0.3);
     let up = Vec3::new(0.0, 0.08, 0.0); // slight vertical offset above edge lines
 
@@ -239,8 +243,10 @@ fn draw_planned_path(
 fn draw_belief_tubes(
     map: Res<MapRes>,
     states: Res<RobotStates>,
+    draw: Res<DrawConfig>,
     mut gizmos: Gizmos,
 ) {
+    if !draw.belief_tubes { return; }
     for (robot_id, state) in &states.0 {
         let (r, g, b) = ROBOT_COLORS.get(*robot_id as usize).copied().unwrap_or((0.5, 0.5, 0.5));
         let edge_ids: Vec<EdgeId> = state.planned_edges.iter().copied().collect();
@@ -275,8 +281,10 @@ fn draw_belief_tubes(
 fn draw_factor_links(
     map: Res<MapRes>,
     states: Res<RobotStates>,
+    draw: Res<DrawConfig>,
     mut gizmos: Gizmos,
 ) {
+    if !draw.factor_links { return; }
     // Collect robots with active factors: their belief positions and active timestep set
     let up = Vec3::new(0.0, 0.15, 0.0);
     let mut robot_data: std::vec::Vec<(u32, std::vec::Vec<Vec3>, std::vec::Vec<u8>)> = std::vec::Vec::new();

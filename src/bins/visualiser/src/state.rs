@@ -17,6 +17,36 @@ pub struct WsInbox(pub Arc<Mutex<VecDeque<RobotStateMsg>>>);
 #[derive(Resource, Default)]
 pub struct WsOutbox(pub Arc<Mutex<VecDeque<String>>>);
 
+/// Toggles for which visual elements to render.
+#[derive(Resource, Clone, Debug)]
+pub struct DrawConfig {
+    pub physical_track: bool,
+    pub magnetic_mainlines: bool,
+    pub magnetic_markers: bool,
+    pub node_spheres: bool,
+    pub edge_lines: bool,
+    pub robots: bool,
+    pub planned_paths: bool,
+    pub belief_tubes: bool,
+    pub factor_links: bool,
+}
+
+impl Default for DrawConfig {
+    fn default() -> Self {
+        Self {
+            physical_track: true,
+            magnetic_mainlines: true,
+            magnetic_markers: true,
+            node_spheres: true,
+            edge_lines: true,
+            robots: true,
+            planned_paths: true,
+            belief_tubes: true,
+            factor_links: true,
+        }
+    }
+}
+
 /// Per-robot state for visualiser rendering.
 #[derive(Clone, Debug)]
 pub struct RobotState {
