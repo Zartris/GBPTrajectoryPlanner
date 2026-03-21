@@ -132,22 +132,28 @@ const ROBOT_COLORS: &[(f32, f32, f32)] = &[
     (1.0, 0.2, 0.8),   // pink
 ];
 
+// Robot chassis dimensions (from carrier URDF)
+const CHASSIS_LENGTH: f32 = 1.15; // front to rear (m)
+const CHASSIS_WIDTH: f32 = 0.90;  // left to right (m)
+const CHASSIS_HEIGHT: f32 = 0.126; // top to bottom (m)
+
 fn spawn_robot_arrows(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Spawn arrows for robot 0 and robot 1
+    // Spawn chassis box for robot 0 and robot 1
     for robot_id in 0..2u32 {
         let (r, g, b) = ROBOT_COLORS.get(robot_id as usize).copied().unwrap_or((0.5, 0.5, 0.5));
-        let cone = meshes.add(Cone { radius: 0.2, height: 0.5 });
+        // Cuboid: half-extents. Length along Z (travel dir before rotation), width along X, height along Y
+        let chassis = meshes.add(Cuboid::new(CHASSIS_WIDTH, CHASSIS_HEIGHT, CHASSIS_LENGTH));
         let mat = materials.add(StandardMaterial {
             base_color: Color::srgb(r, g, b),
-            emissive: bevy::color::LinearRgba::new(r, g, b, 1.0),
+            emissive: bevy::color::LinearRgba::new(r * 0.3, g * 0.3, b * 0.3, 1.0),
             ..default()
         });
         commands.spawn((
-            Mesh3d(cone),
+            Mesh3d(chassis),
             MeshMaterial3d(mat),
             Transform::IDENTITY,
             RobotArrow { robot_id },
@@ -179,11 +185,12 @@ fn update_robot_transforms(
         if let Some(state) = states.0.get(&arrow.robot_id) {
             let pos = robot_world_pos(&map.0, state.current_edge, state.position_s);
             let tan = robot_tangent(&map.0, state.current_edge, state.position_s);
-            transform.translation = Vec3::from(pos);
-            // Align arrow to tangent (rotate default +Y up to tangent direction)
+            // Lift chassis so bottom sits on track (half height above track surface)
+            transform.translation = Vec3::from(pos) + Vec3::new(0.0, CHASSIS_HEIGHT / 2.0, 0.0);
+            // Align chassis length (Z axis) along travel direction
             let dir = Vec3::from(tan);
             if dir.length_squared() > 0.01 {
-                transform.rotation = Quat::from_rotation_arc(Vec3::Y, dir);
+                transform.rotation = Quat::from_rotation_arc(Vec3::NEG_Z, dir);
             }
         }
     }
@@ -265,28 +272,30 @@ fn draw_factor_links(
     states: Res<RobotStates>,
     mut gizmos: Gizmos,
 ) {
-    // Collect robots with active factors and their belief world positions
+    // Collect robots with active factors: their belief positions and active timestep set
     let up = Vec3::new(0.0, 0.15, 0.0);
-    let mut robot_pts: Vec<(u32, std::vec::Vec<Vec3>)> = std::vec::Vec::new();
+    let mut robot_data: std::vec::Vec<(u32, std::vec::Vec<Vec3>, std::vec::Vec<u8>)> = std::vec::Vec::new();
 
     for (&id, state) in &states.0 {
         if state.active_factor_count == 0 { continue; }
         let edge_ids: std::vec::Vec<EdgeId> = state.planned_edges.iter().copied().collect();
         let pts = belief_tube_positions_trajectory(&map.0, &edge_ids, &state.belief_means);
         let world_pts: std::vec::Vec<Vec3> = pts.iter().map(|p| Vec3::from(*p) + up).collect();
-        robot_pts.push((id, world_pts));
+        let active_ks: std::vec::Vec<u8> = state.active_ir_timesteps.iter().copied().collect();
+        robot_data.push((id, world_pts, active_ks));
     }
 
-    // Draw red lines between matching timestep k for each pair of robots
-    for i in 0..robot_pts.len() {
-        for j in (i + 1)..robot_pts.len() {
-            let k_max = robot_pts[i].1.len().min(robot_pts[j].1.len());
+    // Draw red lines only at timesteps where EITHER robot has an active IR factor
+    for i in 0..robot_data.len() {
+        for j in (i + 1)..robot_data.len() {
+            let k_max = robot_data[i].1.len().min(robot_data[j].1.len());
             for k in 0..k_max {
-                let a = robot_pts[i].1[k];
-                let b = robot_pts[j].1[k];
-                let dist = (a - b).length();
-                // Only draw if the variables are close enough to have an active factor
-                if dist < 1.0 {
+                let k_u8 = k as u8;
+                let active_i = robot_data[i].2.contains(&k_u8);
+                let active_j = robot_data[j].2.contains(&k_u8);
+                if active_i || active_j {
+                    let a = robot_data[i].1[k];
+                    let b = robot_data[j].1[k];
                     gizmos.line(a, b, Color::srgba(1.0, 0.2, 0.2, 0.6));
                 }
             }

@@ -62,6 +62,9 @@ pub struct RobotStateMsg {
     /// Total number of active inter-robot factors (can exceed active_factors.len()
     /// since active_factors only lists neighbour IDs, not per-variable factor count).
     pub ir_factor_count: u16,
+    /// Which variable timesteps (k=0..K) have active IR factors.
+    /// Used by the visualiser to draw factor links at the correct positions.
+    pub active_ir_timesteps: Vec<u8, MAX_HORIZON>,
 }
 
 /// Visualiser -> Bridge/Simulator

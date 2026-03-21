@@ -16,16 +16,19 @@ const MAX_FACTORS: usize = NUM_DYN_FACTORS + MAX_IR_FACTORS;
 
 const GBP_ITERATIONS: usize = 15;
 const DT: f32 = 0.1; // seconds per GBP timestep
-const D_SAFE: f32 = 0.3; // minimum clearance (m)
-const SIGMA_R: f32 = 0.15; // inter-robot factor noise — stronger than dynamics (sigma_dyn=0.5)
-                            // precision = 1/0.15^2 ≈ 44 vs dynamics precision = 1/0.5^2 = 4
+const D_SAFE: f32 = 1.3; // minimum center-to-center clearance (m) — chassis 1.15m + 0.15m margin
+const SIGMA_R: f32 = 0.15; // inter-robot factor noise (precision ≈ 44 vs dynamics precision = 4)
+const IR_RAMP_START: f32 = 2.6; // 2× d_safe — distance where IR factor starts ramping up
+const IR_ACTIVATION_RANGE: f32 = 3.0; // distance where IR factors are spawned/despawned
 const AGENT_DT: f32 = 0.02; // 50 Hz agent tick
 
 /// Output of one agent step.
 pub struct StepOutput {
     pub velocity: f32,
+    pub raw_gbp_velocity: f32,
     pub position_s: f32,
     pub current_edge: EdgeId,
+    pub min_neighbour_dist_3d: f32,
 }
 
 pub struct RobotAgent<C: CommsInterface> {
@@ -96,6 +99,17 @@ impl<C: CommsInterface> RobotAgent<C> {
     /// Number of currently active inter-robot factors.
     pub fn interrobot_factor_count(&self) -> usize {
         self.ir_set.count()
+    }
+
+    /// Which variable timesteps have active IR factors (for visualiser).
+    pub fn active_ir_timesteps(&self) -> Vec<u8, MAX_HORIZON> {
+        let mut ts = Vec::new();
+        for &(_, k, _) in self.ir_set.iter() {
+            if !ts.iter().any(|&t| t == k as u8) {
+                let _ = ts.push(k as u8);
+            }
+        }
+        ts
     }
 
     /// Current belief means for all K variables.
@@ -217,18 +231,21 @@ impl<C: CommsInterface> RobotAgent<C> {
         self.constraints.set_max_speed(max_speed);
         let velocity = self.constraints.apply(raw_velocity, AGENT_DT);
 
-        // 8. Safety monitoring — track 3D distance for hard clamp signal
+        // 8. Monitor 3D distance (diagnostic only — no clamp).
+        // TODO: Replace with a proper CBF (Control Barrier Function) safety layer.
         let dist_3d = self.min_3d_distance_to_neighbours(&broadcasts);
-        if dist_3d <= D_SAFE {
-            self.last_max_position = self.position_s;
-        } else {
-            self.last_max_position = f32::MAX;
-        }
+        self.last_max_position = f32::MAX; // no position clamp — trust GBP + DynamicConstraints
 
-        // 8. Broadcast state
+        // 9. Broadcast state
         let _ = self.comms.broadcast(&self.make_broadcast(velocity));
 
-        StepOutput { velocity, position_s: self.position_s, current_edge: self.current_edge }
+        StepOutput {
+            velocity,
+            raw_gbp_velocity: raw_velocity,
+            position_s: self.position_s,
+            current_edge: self.current_edge,
+            min_neighbour_dist_3d: dist_3d,
+        }
     }
 
 
@@ -290,7 +307,7 @@ impl<C: CommsInterface> RobotAgent<C> {
             }
 
             let _ = active_ids.push(bcast.robot_id);
-            let activation_range = D_SAFE * 3.0;
+            let activation_range = IR_ACTIVATION_RANGE;
 
             // For each variable k (skip k=0 — anchor prior is too strong, factor would
             // have no effect), check if predicted positions are close enough in 3D.
@@ -400,8 +417,8 @@ impl<C: CommsInterface> RobotAgent<C> {
                         irf.ext_eta_b = irf.ext_lambda_b * ext_mean;
                     }
 
-                    // Activate factor only when robots are close enough to matter
-                    irf.set_active(dist < D_SAFE * 5.0);
+                    // Activate factor only when robots are within activation range
+                    irf.set_active(dist < IR_ACTIVATION_RANGE);
                 }
             }
         }
@@ -416,16 +433,13 @@ impl<C: CommsInterface> RobotAgent<C> {
     }
 
     fn make_broadcast(&self, velocity: f32) -> RobotBroadcast {
-        // Broadcast CAVITY beliefs (marginal minus IR factor messages).
-        // This prevents circular evidence — when robot B receives our cavity,
-        // it gets our belief WITHOUT the information B already sent us.
-        let cavity_means = self.cavity_belief_means();
-        let cavity_vars = self.cavity_belief_vars();
+        // Broadcast MARGINAL beliefs (standard in distributed GBP).
+        // Circular evidence exists but is accepted — message damping stabilises it.
         let mut means: Vec<f32, MAX_HORIZON> = Vec::new();
         let mut vars: Vec<f32, MAX_HORIZON> = Vec::new();
-        for i in 0..MAX_HORIZON {
-            let _ = means.push(cavity_means[i]);
-            let _ = vars.push(cavity_vars[i]);
+        for v in &self.graph.variables {
+            let _ = means.push(v.mean());
+            let _ = vars.push(v.variance().min(1e6));
         }
         RobotBroadcast {
             robot_id: self.robot_id,

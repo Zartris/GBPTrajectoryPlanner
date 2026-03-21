@@ -89,6 +89,7 @@ mod tests {
             planned_edges: heapless::Vec::new(),
             active_factors: heapless::Vec::new(),
             ir_factor_count: 0,
+            active_ir_timesteps: heapless::Vec::new(),
         }
     }
 

@@ -169,10 +169,9 @@ async fn main() {
     // When both robots share the same goal, cap robot 1's total_length so it stops
     // d_safe before the goal node. This prevents the end-node collision that the
     // reactive safety cap can't fully prevent due to dynamics taper dominance.
-    const D_SAFE: f32 = 0.3;
+    const D_SAFE: f32 = 1.3; // center-to-center: chassis 1.15m + 0.15m margin
     let r1_total = if goal0 == goal1 {
-        // Use 1.5x d_safe margin to account for arc-length→3D distance mismatch on curved edges
-        (total_length1 - D_SAFE * 1.5).max(0.1)
+        (total_length1 - D_SAFE).max(0.1) // stop d_safe before goal
     } else {
         total_length1
     };
@@ -246,8 +245,8 @@ async fn main() {
     let tx1 = tx_state.clone();
     tokio::spawn(async move {
         if delayed_start {
-            info!("endcollision: robot 1 spawns in 1 second...");
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            info!("endcollision: robot 1 spawns in 2 seconds...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             info!("endcollision: robot 1 spawning now");
         }
         tokio::spawn(physics::physics_task(Arc::clone(&physics1_clone)));
@@ -267,7 +266,7 @@ async fn main() {
             let p1 = map_mon.eval_position(edge1, local1).unwrap_or([0.0; 3]);
             let dx = p0[0]-p1[0]; let dy = p0[1]-p1[1]; let dz = p0[2]-p1[2];
             let dist_3d = (dx*dx + dy*dy + dz*dz).sqrt();
-            info!("DIST: s0={:.2} s1={:.2} 3d={:.3}m edge0={:?} edge1={:?} (d_safe=0.3)", s0, s1, dist_3d, edge0, edge1);
+            info!("DIST: s0={:.2} s1={:.2} 3d={:.3}m edge0={:?} edge1={:?} (d_safe={})", s0, s1, dist_3d, edge0, edge1, D_SAFE);
         }
     });
 

@@ -105,10 +105,13 @@ impl AgentRunner {
 
         StepOut {
             velocity: out.velocity,
+            raw_gbp_velocity: out.raw_gbp_velocity,
+            min_neighbour_dist_3d: out.min_neighbour_dist_3d,
             current_edge,
             local_s,
             pos_3d,
             active_factor_count: self.agent.interrobot_factor_count(),
+            active_ir_timesteps: self.agent.active_ir_timesteps(),
             belief_means,
             belief_vars,
             max_position: self.agent.last_max_position(),
@@ -149,10 +152,13 @@ impl AgentRunner {
 
 pub struct StepOut {
     pub velocity: f32,
+    pub raw_gbp_velocity: f32,
+    pub min_neighbour_dist_3d: f32,
     pub current_edge: EdgeId,
     pub local_s: f32,
     pub pos_3d: [f32; 3],
     pub active_factor_count: usize,
+    pub active_ir_timesteps: HVec<u8, MAX_HORIZON>,
     pub belief_means: [f32; MAX_HORIZON],
     pub belief_vars: [f32; MAX_HORIZON],
     pub max_position: f32,
@@ -173,16 +179,17 @@ pub async fn agent_task(
 
         let out = {
             let mut r = runner.lock().unwrap_or_else(|e| e.into_inner());
-            let t0 = std::time::Instant::now();
             let out = r.step(global_s);
-            let dt_ms = t0.elapsed().as_micros();
-            if dt_ms > 5000 {
-                tracing::warn!("robot {}: step took {}us! ir_factors={}", robot_id, dt_ms, out.active_factor_count);
-            }
-            if out.active_factor_count > 0 {
+            // Only log every ~1s (every 50th tick at 50Hz) to reduce spam
+            static mut TICK_COUNT: [u32; 2] = [0; 2];
+            let tick = unsafe { &mut TICK_COUNT[robot_id.min(1) as usize] };
+            *tick += 1;
+            if *tick % 50 == 0 && out.active_factor_count > 0 {
                 tracing::info!(
-                    "robot {}: s={:.3} v={:.3} ir_factors={} step={}us",
-                    robot_id, global_s, out.velocity, out.active_factor_count, dt_ms,
+                    "R{}: s={:.2} gbp_v={:.2} cmd_v={:.2} dist3d={:.2} ir={} max_pos={:.1}",
+                    robot_id, global_s, out.raw_gbp_velocity, out.velocity,
+                    out.min_neighbour_dist_3d, out.active_factor_count,
+                    out.max_position,
                 );
             }
             // Pass map-coords 3D position so other robots' safety cap sees correct pos
@@ -197,11 +204,6 @@ pub async fn agent_task(
         {
             let mut p = physics.lock().unwrap_or_else(|e| e.into_inner());
             p.velocity = out.velocity;
-            // Hard position clamp: if we've crept past max_position, snap back
-            if out.max_position < f32::MAX && p.position_s > out.max_position {
-                p.position_s = out.max_position;
-                p.velocity = 0.0;
-            }
         }
 
         let planned_edges = runner.lock().unwrap_or_else(|e| e.into_inner()).planned_edge_ids();
@@ -225,6 +227,7 @@ pub async fn agent_task(
                 }
                 af
             },
+            active_ir_timesteps: out.active_ir_timesteps,
         };
         let _ = tx.send(msg);
     }

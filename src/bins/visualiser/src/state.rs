@@ -24,6 +24,8 @@ pub struct RobotState {
     pub belief_means: [f32; MAX_HORIZON],
     pub belief_vars: [f32; MAX_HORIZON],
     pub active_factor_count: usize,
+    /// Which variable timesteps have active IR factors.
+    pub active_ir_timesteps: heapless::Vec<u8, MAX_HORIZON>,
     /// How many consecutive zero-count updates we've seen (for debounce)
     zero_streak: u8,
 }
@@ -39,6 +41,7 @@ impl Default for RobotState {
             belief_means: [0.0; MAX_HORIZON],
             belief_vars: [0.0; MAX_HORIZON],
             active_factor_count: 0,
+            active_ir_timesteps: heapless::Vec::new(),
             zero_streak: 0,
         }
     }
@@ -54,6 +57,7 @@ impl RobotState {
         self.planned_edges = msg.planned_edges.clone();
         self.belief_means = msg.belief_means;
         self.belief_vars = msg.belief_vars;
+        self.active_ir_timesteps = msg.active_ir_timesteps.clone();
         // Debounce: only show 0 after 3 consecutive zero-count messages
         let new_count = msg.ir_factor_count as usize;
         if new_count > 0 {

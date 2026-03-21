@@ -3,9 +3,11 @@
 //! Connects only var_idx_a (in this robot's graph).
 //! Robot B's belief is injected externally as (ext_eta_b, ext_lambda_b).
 //!
-//! Uses a one-sided penalty: only active when `dist < d_safe` (collision zone).
-//! When `dist >= d_safe`, the factor sends zero messages (constraint satisfied).
-//! This prevents the factor from pulling robots together when safely separated.
+//! Uses exponential decay precision — smooth everywhere, no discontinuities:
+//!   - `dist <= d_safe`: full precision (collision zone, maximum repulsion)
+//!   - `dist > d_safe`: precision decays as `exp(-alpha * (dist - d_safe))`
+//! The smooth decay eliminates GBP oscillation caused by hard cutoffs while
+//! still providing early warning. At 2× d_safe, precision is ~2% of full.
 //!
 //! NOTE on `linearize()` return values: Because this is a unary factor (after Schur
 //! complement marginalization over robot B), `linearize()` returns the pre-computed
@@ -56,19 +58,25 @@ impl Factor for InterRobotFactor {
     fn is_active(&self) -> bool { self.active }
 
     fn linearize(&self, _variables: &[VariableNode]) -> LinearizedFactor {
-        // One-sided hinge: only penalize when dist < d_safe (collision zone).
-        // When dist >= d_safe, the constraint is satisfied — send zero message.
-        let violation = self.d_safe - self.dist; // positive = too close
-        if violation <= 0.0 {
-            // Constraint satisfied — no message
-            let mut jacobian: Vec<f32, 2> = Vec::new();
-            let _ = jacobian.push(0.0);
-            return LinearizedFactor { jacobian, residual: 0.0, precision: 0.0 };
-        }
+        // Exponential decay precision — smooth everywhere, no discontinuities.
+        //
+        //   dist <= d_safe  → full precision (collision zone)
+        //   dist > d_safe   → precision decays as exp(-alpha * (dist - d_safe))
+        //
+        // alpha controls the decay rate. Higher alpha = faster decay = less influence at distance.
+        // With alpha=3.0 and d_safe=1.3: at 2*d_safe (2.6m) precision is ~2% of full.
+        const DECAY_ALPHA: f32 = 3.0;
 
-        let residual = violation;
+        let residual = self.d_safe - self.dist;
         let sigma_r = f32::max(self.sigma_r, 1e-6);
-        let prec = 1.0 / (sigma_r * sigma_r);
+        let full_prec = 1.0 / (sigma_r * sigma_r);
+
+        let prec = if self.dist <= self.d_safe {
+            full_prec
+        } else {
+            let decay = libm::expf(-DECAY_ALPHA * (self.dist - self.d_safe));
+            full_prec * decay
+        };
 
         // Joint information matrix (2x2, pairwise between A and B)
         let xi_aa = prec * self.jacobian_a * self.jacobian_a;

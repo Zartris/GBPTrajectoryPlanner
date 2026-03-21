@@ -642,3 +642,33 @@ git tag m6-complete
 ```
 
 ---
+
+## Deferred from M4: config.yaml for tuning parameters
+
+- [ ] **config.yaml**: Create a `config.yaml` file that externalises all hardcoded tuning constants. Parsed in simulator/visualiser (PC-only), passed as structs to `RobotAgent::new()` and `DynamicConstraints::new()`. The no_std crates receive values, never parse.
+
+Parameters to include:
+```yaml
+robot:
+  chassis_length: 1.15
+  chassis_width: 0.90
+  chassis_height: 0.126
+gbp:
+  d_safe: 1.3
+  sigma_r: 0.15
+  sigma_dyn: 0.5
+  iterations: 15
+  dt: 0.1
+  msg_damping: 0.5
+  ir_activation_range: 3.0
+  ir_ramp_start: 2.6
+constraints:
+  max_accel: 2.5
+  max_jerk: 5.0
+  max_speed: 2.5
+simulator:
+  agent_hz: 50
+  physics_hz: 50
+```
+
+CLI: `--config config.yaml` (defaults to sensible hardcoded values if not provided).
