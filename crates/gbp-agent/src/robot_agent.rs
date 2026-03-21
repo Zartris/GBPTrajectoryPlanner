@@ -22,7 +22,7 @@ const GBP_INTERNAL_ITERS: usize = 3;
 const GBP_EXTERNAL_ITERS: usize = 5;
 const DT: f32 = 0.1; // seconds per GBP timestep
 const D_SAFE: f32 = 1.3; // minimum center-to-center clearance (m) — chassis 1.15m + 0.15m margin
-const SIGMA_R: f32 = 0.15; // inter-robot factor noise (precision ≈ 44 vs dynamics precision = 4)
+const SIGMA_R: f32 = 0.12; // inter-robot factor noise (precision ≈ 44 vs dynamics precision = 4)
 const IR_RAMP_START: f32 = 2.6; // 2× d_safe — distance where IR factor starts ramping up
 const IR_ACTIVATION_RANGE: f32 = 3.0; // distance where IR factors are spawned/despawned
 const AGENT_DT: f32 = 0.02; // 50 Hz agent tick
@@ -402,8 +402,12 @@ impl<C: CommsInterface> RobotAgent<C> {
     fn update_interrobot_jacobians(
         &mut self,
         broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>,
-        _map: &Map,
+        map: &Map,
     ) {
+        /// Front robot gets a dampened push — yielding matters more than fleeing.
+        /// 1.0 = full push (no dampening), 0.0 = no push at all.
+        const FRONT_DAMPING: f32 = 0.3;
+
         for bcast in broadcasts.iter() {
             if bcast.robot_id == self.robot_id { continue; }
 
@@ -421,15 +425,87 @@ impl<C: CommsInterface> RobotAgent<C> {
                     bcast.position_s
                 };
 
-                if let Some(FactorKind::InterRobot(irf)) = self.graph.get_factor_kind_mut(factor_idx) {
-                    let diff = s_a - s_b;
-                    let dist = diff.abs();
+                // Compute 3D positions at timestep k for both robots
+                let my_pos = self.trajectory.as_ref()
+                    .and_then(|t| t.edge_and_local_s(s_a))
+                    .and_then(|(eid, ls, _)| map.eval_position(eid, ls))
+                    .unwrap_or(self.pos_3d);
 
-                    // Jacobian: d(dist)/d(s_a) = sign(s_a - s_b)
-                    let sign = if diff >= 0.0 { 1.0 } else { -1.0 };
-                    irf.jacobian_a = -sign; // negative because residual = d_safe - dist
-                    irf.jacobian_b = sign;
-                    irf.dist = dist;
+                let my_tangent = self.trajectory.as_ref()
+                    .and_then(|t| t.edge_and_local_s(s_a))
+                    .and_then(|(eid, ls, _)| map.eval_tangent(eid, ls))
+                    .unwrap_or([1.0, 0.0, 0.0]);
+
+                // B's predicted 3D position at timestep k (walk B's planned edges)
+                let their_pos = {
+                    let mut cumulative = 0.0f32;
+                    let mut found = bcast.pos;
+                    for &eid in bcast.planned_edges.iter() {
+                        if let Some(idx) = map.edge_index(eid) {
+                            let len = map.edges[idx].geometry.length();
+                            if s_b < cumulative + len {
+                                let local = s_b - cumulative;
+                                if let Some(p) = map.eval_position(eid, local) {
+                                    found = p;
+                                }
+                                break;
+                            }
+                            cumulative += len;
+                        }
+                    }
+                    found
+                };
+
+                // B's tangent at timestep k (for Schur complement coupling)
+                let their_tangent = {
+                    let mut cumulative = 0.0f32;
+                    let mut found = [1.0, 0.0, 0.0];
+                    for &eid in bcast.planned_edges.iter() {
+                        if let Some(idx) = map.edge_index(eid) {
+                            let len = map.edges[idx].geometry.length();
+                            if s_b < cumulative + len {
+                                let local = s_b - cumulative;
+                                if let Some(t) = map.eval_tangent(eid, local) {
+                                    found = t;
+                                }
+                                break;
+                            }
+                            cumulative += len;
+                        }
+                    }
+                    found
+                };
+
+                // 3D separation and distance
+                let sep = [
+                    my_pos[0] - their_pos[0],
+                    my_pos[1] - their_pos[1],
+                    my_pos[2] - their_pos[2],
+                ];
+                let dist_3d = libm::sqrtf(sep[0] * sep[0] + sep[1] * sep[1] + sep[2] * sep[2]);
+
+                if let Some(FactorKind::InterRobot(irf)) = self.graph.get_factor_kind_mut(factor_idx) {
+                    if dist_3d < 1e-6 {
+                        irf.dist = 0.0;
+                        irf.set_active(true);
+                        continue;
+                    }
+
+                    // 3D Jacobians: d(dist_3d)/d(s_a) and d(dist_3d)/d(s_b)
+                    let dot_a = sep[0] * my_tangent[0] + sep[1] * my_tangent[1] + sep[2] * my_tangent[2];
+                    let dot_b = sep[0] * their_tangent[0] + sep[1] * their_tangent[1] + sep[2] * their_tangent[2];
+
+                    let mut jac_a = dot_a / dist_3d;
+                    let jac_b = -dot_b / dist_3d;
+
+                    // Asymmetric dampening: front robot gets gentler push
+                    if jac_a > 0.0 {
+                        jac_a *= FRONT_DAMPING;
+                    }
+
+                    irf.jacobian_a = jac_a;
+                    irf.jacobian_b = jac_b;
+                    irf.dist = dist_3d;
 
                     // Set external belief of robot B at timestep k from its broadcast
                     if k < bcast.belief_means.len() && k < bcast.belief_vars.len() {
@@ -439,8 +515,8 @@ impl<C: CommsInterface> RobotAgent<C> {
                         irf.ext_eta_b = irf.ext_lambda_b * ext_mean;
                     }
 
-                    // Activate factor only when robots are within activation range
-                    irf.set_active(dist < IR_ACTIVATION_RANGE);
+                    // Activate factor only when robots are within activation range (3D)
+                    irf.set_active(dist_3d < IR_ACTIVATION_RANGE);
                 }
             }
         }

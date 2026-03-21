@@ -6,7 +6,7 @@ pub mod agent_runner;
 
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use gbp_comms::{RobotBroadcast, RobotStateMsg, TrajectoryCommand};
 use gbp_map::map::{EdgeId, Map, NodeId};
@@ -254,11 +254,22 @@ async fn main() {
     });
     let map_mon = Arc::clone(&map_arc);
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(1));
+        // Collision detection state
+        const CHASSIS_LEN: f32 = 1.15; // center-to-center overlap threshold
+        let mut collision_active = false;
+        let mut collision_start_s: (f32, f32) = (0.0, 0.0);
+        let mut collision_min_dist: f32 = f32::MAX;
+        let mut collision_count: u32 = 0;
+        let mut last_collision_log = std::time::Instant::now();
+
+        let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(100)); // 10 Hz for finer collision detection
+        let mut dist_log_counter: u32 = 0;
         loop {
             ticker.tick().await;
             let s0 = p0_mon.lock().unwrap_or_else(|e| e.into_inner()).position_s;
             let s1 = p1_mon.lock().unwrap_or_else(|e| e.into_inner()).position_s;
+            let v0 = p0_mon.lock().unwrap_or_else(|e| e.into_inner()).velocity;
+            let v1 = p1_mon.lock().unwrap_or_else(|e| e.into_inner()).velocity;
             let (edge0, local0) = r0_mon.lock().unwrap_or_else(|e| e.into_inner()).edge_at_s(s0);
             let (edge1, local1) = r1_mon.lock().unwrap_or_else(|e| e.into_inner()).edge_at_s(s1);
             // 3D distance
@@ -266,7 +277,58 @@ async fn main() {
             let p1 = map_mon.eval_position(edge1, local1).unwrap_or([0.0; 3]);
             let dx = p0[0]-p1[0]; let dy = p0[1]-p1[1]; let dz = p0[2]-p1[2];
             let dist_3d = (dx*dx + dy*dy + dz*dz).sqrt();
-            info!("DIST: s0={:.2} s1={:.2} 3d={:.3}m edge0={:?} edge1={:?} (d_safe={})", s0, s1, dist_3d, edge0, edge1, D_SAFE);
+
+            // Collision detection: chassis overlap when center-to-center < CHASSIS_LEN
+            // Ignore overlap near start — robots spawn at s≈0 with initial overlap
+            // in endcollision/follow scenarios. Only flag collisions after both have moved.
+            let either_near_start = s0 < 1.5 || s1 < 1.5;
+            let overlapping = dist_3d < CHASSIS_LEN && !either_near_start;
+            if overlapping {
+                if !collision_active {
+                    // New collision event
+                    collision_active = true;
+                    collision_count += 1;
+                    collision_start_s = (s0, s1);
+                    collision_min_dist = dist_3d;
+                    warn!(
+                        "COLLISION #{}: robots overlapping! dist={:.3}m (< chassis {:.2}m) \
+                         R0: s={:.2} v={:.2} edge={:?} pos=[{:.2},{:.2},{:.2}] \
+                         R1: s={:.2} v={:.2} edge={:?} pos=[{:.2},{:.2},{:.2}]",
+                        collision_count, dist_3d, CHASSIS_LEN,
+                        s0, v0, edge0, p0[0], p0[1], p0[2],
+                        s1, v1, edge1, p1[0], p1[1], p1[2],
+                    );
+                    last_collision_log = std::time::Instant::now();
+                } else {
+                    // Ongoing collision — throttle to once per second
+                    collision_min_dist = collision_min_dist.min(dist_3d);
+                    if last_collision_log.elapsed().as_secs_f32() >= 1.0 {
+                        warn!(
+                            "COLLISION #{} ongoing: dist={:.3}m min={:.3}m \
+                             R0: s={:.2} v={:.2} R1: s={:.2} v={:.2}",
+                            collision_count, dist_3d, collision_min_dist, s0, v0, s1, v1,
+                        );
+                        last_collision_log = std::time::Instant::now();
+                    }
+                }
+            } else if collision_active {
+                // Collision ended
+                info!(
+                    "COLLISION #{} resolved: min_dist={:.3}m R0 moved {:.2}m R1 moved {:.2}m",
+                    collision_count, collision_min_dist,
+                    (s0 - collision_start_s.0).abs(),
+                    (s1 - collision_start_s.1).abs(),
+                );
+                collision_active = false;
+                collision_min_dist = f32::MAX;
+            }
+
+            // Regular DIST log every 1s (every 10th tick at 10 Hz)
+            dist_log_counter += 1;
+            if dist_log_counter % 10 == 0 {
+                info!("DIST: s0={:.2} s1={:.2} 3d={:.3}m edge0={:?} edge1={:?} (d_safe={}) collisions={}",
+                    s0, s1, dist_3d, edge0, edge1, D_SAFE, collision_count);
+            }
         }
     });
 
