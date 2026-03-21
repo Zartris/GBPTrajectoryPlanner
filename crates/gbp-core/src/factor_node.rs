@@ -58,6 +58,17 @@ impl FactorKind {
             Self::VelocityBound(f)  => f,
         }
     }
+
+    /// Whether this factor uses only local (internal) variables.
+    /// Internal factors: Dynamics, VelocityBound (both connect variables we own).
+    /// External factors: InterRobot (depends on external belief from another robot).
+    pub fn is_internal(&self) -> bool {
+        match self {
+            Self::Dynamics(_) => true,
+            Self::VelocityBound(_) => true,
+            Self::InterRobot(_) => false,
+        }
+    }
 }
 
 /// Internal wrapper used by FactorGraph to store a factor alongside its outgoing messages.

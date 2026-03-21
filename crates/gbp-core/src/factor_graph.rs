@@ -69,7 +69,93 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
         }
     }
 
+    /// Run split internal/external GBP message passing (MAGICS architecture).
+    ///
+    /// Separates factor-to-variable messages into two classes:
+    /// - **Internal factors** (Dynamics, VelocityBound): connect only variables owned
+    ///   by this robot. These converge quickly and benefit from multiple iterations.
+    /// - **External factors** (InterRobot): depend on beliefs broadcast by other robots.
+    ///   These carry stale evidence — running them every internal iteration amplifies
+    ///   that staleness, destabilising convergence in loopy graphs.
+    ///
+    /// For each of `n_external` external iterations:
+    ///   1. Run `n_internal` rounds of internal-only factor→variable + variable→factor.
+    ///   2. Run one round of external-only factor→variable + variable→factor.
+    ///
+    /// This lets the local chain settle before injecting inter-robot influence,
+    /// reducing oscillation. The original gbpplanner (Patwardhan et al.) uses
+    /// TI=10 internal iterations per TE=10 external iterations as the default.
+    pub fn iterate_split(&mut self, n_internal: usize, n_external: usize) {
+        for _ in 0..n_external {
+            // Internal convergence rounds
+            for _ in 0..n_internal {
+                self.factor_to_variable_pass_filtered(true);
+                self.variable_to_factor_pass();
+            }
+            // One external round
+            self.factor_to_variable_pass_filtered(false);
+            self.variable_to_factor_pass();
+        }
+    }
+
     // -- Private --
+
+    fn factor_to_variable_pass_filtered(&mut self, internal_only: bool) {
+        for f in self.factors.iter_mut() {
+            if !f.kind.as_factor().is_active() { continue; }
+            if f.kind.is_internal() != internal_only { continue; }
+            f.kind.as_factor_mut().update(&self.variables);
+            let var_indices = f.kind.as_factor().variable_indices();
+
+            if var_indices.len() == 1 {
+                let lf = f.kind.as_factor().linearize(&self.variables);
+                let new_eta = lf.residual;
+                let new_lambda = lf.precision;
+                f.msg_eta[0]    = MSG_DAMPING * new_eta    + (1.0 - MSG_DAMPING) * f.msg_eta[0];
+                f.msg_lambda[0] = MSG_DAMPING * new_lambda + (1.0 - MSG_DAMPING) * f.msg_lambda[0];
+
+            } else if var_indices.len() == 2 {
+                let [idx0, idx1] = [var_indices[0], var_indices[1]];
+                let lf = f.kind.as_factor().linearize(&self.variables);
+                let j0 = lf.jacobian[0];
+                let j1 = lf.jacobian[1];
+                let prec = lf.precision;
+                let r    = lf.residual;
+
+                let x0 = self.variables[idx0].mean();
+                let x1 = self.variables[idx1].mean();
+
+                let xi_00 = prec * j0 * j0;
+                let xi_11 = prec * j1 * j1;
+                let xi_01 = prec * j0 * j1;
+
+                let jx = j0 * x0 + j1 * x1;
+                let zeta_0 = prec * j0 * (jx - r);
+                let zeta_1 = prec * j1 * (jx - r);
+
+                let eta0_cav    = self.variables[idx0].eta    - f.msg_eta[0];
+                let lambda0_cav = self.variables[idx0].lambda - f.msg_lambda[0];
+                let eta1_cav    = self.variables[idx1].eta    - f.msg_eta[1];
+                let lambda1_cav = self.variables[idx1].lambda - f.msg_lambda[1];
+
+                let denom1 = xi_11 + lambda1_cav;
+                if denom1.abs() > 1e-12 {
+                    let new_lambda0 = xi_00 - xi_01 * xi_01 / denom1;
+                    let new_eta0    = zeta_0 - xi_01 * (zeta_1 + eta1_cav) / denom1;
+                    f.msg_lambda[0] = MSG_DAMPING * new_lambda0 + (1.0 - MSG_DAMPING) * f.msg_lambda[0];
+                    f.msg_eta[0]    = MSG_DAMPING * new_eta0    + (1.0 - MSG_DAMPING) * f.msg_eta[0];
+                }
+
+                let denom0 = xi_00 + lambda0_cav;
+                if denom0.abs() > 1e-12 {
+                    let new_lambda1 = xi_11 - xi_01 * xi_01 / denom0;
+                    let new_eta1    = zeta_1 - xi_01 * (zeta_0 + eta0_cav) / denom0;
+                    f.msg_lambda[1] = MSG_DAMPING * new_lambda1 + (1.0 - MSG_DAMPING) * f.msg_lambda[1];
+                    f.msg_eta[1]    = MSG_DAMPING * new_eta1    + (1.0 - MSG_DAMPING) * f.msg_eta[1];
+                }
+            }
+        }
+    }
 
     fn factor_to_variable_pass(&mut self) {
         for f in self.factors.iter_mut() {
