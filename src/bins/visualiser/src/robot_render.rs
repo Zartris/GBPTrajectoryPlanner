@@ -162,7 +162,12 @@ fn spawn_new_robot_meshes(
                 emissive: bevy::color::LinearRgba::new(r * 0.3, g * 0.3, b * 0.3, 1.0),
                 ..default()
             })),
-            Transform::from_scale(Vec3::splat(STL_SCALE)),
+            // Z-up STL → Y-up Bevy: scale mm→m + rotate -90° around X
+            Transform {
+                scale: Vec3::splat(STL_SCALE),
+                rotation: Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+                ..default()
+            },
             RobotArrow { robot_id: id },
         ));
     }

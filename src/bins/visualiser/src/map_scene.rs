@@ -186,7 +186,13 @@ fn spawn_environment_stl(
     asset_server: Res<AssetServer>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let stl_transform = Transform::from_scale(Vec3::splat(STL_SCALE));
+    // STL models are Z-up (CAD convention), Bevy is Y-up.
+    // Rotate -90° around X to match map_to_bevy: (x, y, z) → (x, z, -y).
+    let stl_transform = Transform {
+        scale: Vec3::splat(STL_SCALE),
+        rotation: Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+        ..default()
+    };
 
     // Physical track — grey, semi-transparent
     commands.spawn((
