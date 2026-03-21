@@ -200,7 +200,7 @@ async fn main() {
     for (i, &(start, goal)) in assignments.iter().enumerate() {
         let rx = bcast_tx.subscribe();
         let comms = SimComms::new(bcast_tx.clone(), rx);
-        let mut runner = AgentRunner::new(comms, map_arc.clone(), i as u32);
+        let mut runner = AgentRunner::new(comms, map_arc.clone(), i as u32, &gbp_core::GbpConfig::default());
 
         let total_length = if let Some(path) = gbp_map::astar::astar(&map_arc, start, goal) {
             let traj = build_trajectory_edges(&map_arc, &path);

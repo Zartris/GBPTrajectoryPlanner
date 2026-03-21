@@ -19,6 +19,8 @@ pub struct DynamicConstraints {
     pub max_jerk: f32,
     /// Maximum speed (m/s) — typically from edge.speed.max
     pub max_speed: f32,
+    /// Minimum allowed velocity (slightly negative allows creep-back).
+    pub v_min: f32,
 
     // Internal state
     last_velocity: f32,
@@ -26,11 +28,12 @@ pub struct DynamicConstraints {
 }
 
 impl DynamicConstraints {
-    pub fn new(max_accel: f32, max_jerk: f32, max_speed: f32) -> Self {
+    pub fn new(max_accel: f32, max_jerk: f32, max_speed: f32, v_min: f32) -> Self {
         Self {
             max_accel,
             max_jerk,
             max_speed,
+            v_min,
             last_velocity: 0.0,
             last_accel: 0.0,
         }
@@ -64,9 +67,9 @@ impl DynamicConstraints {
         let clamped_accel = accel.clamp(-self.max_accel, self.max_accel);
 
         // Integrate to velocity, clamp to [v_min, max_speed].
-        // v_min = -0.3 allows slow reverse creep for merge overshoot recovery.
-        const V_MIN: f32 = -0.3;
-        let velocity = (self.last_velocity + clamped_accel * dt).clamp(V_MIN, self.max_speed);
+        // v_min allows slow reverse creep for merge overshoot recovery.
+        let v_min = self.v_min;
+        let velocity = (self.last_velocity + clamped_accel * dt).clamp(v_min, self.max_speed);
 
         self.last_accel = clamped_accel;
         self.last_velocity = velocity;
@@ -93,7 +96,7 @@ mod tests {
 
     #[test]
     fn respects_max_speed() {
-        let mut dc = DynamicConstraints::new(10.0, 100.0, 2.5);
+        let mut dc = DynamicConstraints::new(10.0, 100.0, 2.5, -0.3);
         // With high accel/jerk limits, should reach max_speed quickly
         for _ in 0..200 {
             dc.apply(10.0, 0.02); // request way above max
@@ -103,7 +106,7 @@ mod tests {
 
     #[test]
     fn respects_accel_limit() {
-        let mut dc = DynamicConstraints::new(2.5, 1000.0, 10.0);
+        let mut dc = DynamicConstraints::new(2.5, 1000.0, 10.0, -0.3);
         // With high jerk but limited accel, velocity should increase by at most 2.5 * dt per step
         let v = dc.apply(10.0, 0.02);
         assert!(v <= 2.5 * 0.02 + 0.001, "v={} expected <= {}", v, 2.5 * 0.02);
@@ -111,7 +114,7 @@ mod tests {
 
     #[test]
     fn smooth_ramp_up() {
-        let mut dc = DynamicConstraints::new(2.5, 5.0, 2.5);
+        let mut dc = DynamicConstraints::new(2.5, 5.0, 2.5, -0.3);
         let mut velocities = [0.0f32; 10];
         for i in 0..10 {
             velocities[i] = dc.apply(2.5, 0.02);
@@ -125,7 +128,7 @@ mod tests {
 
     #[test]
     fn zero_velocity_stays_zero() {
-        let mut dc = DynamicConstraints::new(2.5, 5.0, 2.5);
+        let mut dc = DynamicConstraints::new(2.5, 5.0, 2.5, -0.3);
         let v = dc.apply(0.0, 0.02);
         assert!(v.abs() < 0.001);
     }

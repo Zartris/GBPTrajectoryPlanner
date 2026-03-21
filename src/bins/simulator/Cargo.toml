@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 gbp-agent  = { path = "../../../crates/gbp-agent" }
 gbp-comms  = { path = "../../../crates/gbp-comms", features = ["serde"] }
+gbp-core   = { path = "../../../crates/gbp-core" }
 gbp-map    = { path = "../../../crates/gbp-map", features = ["parse"] }
 heapless   = { workspace = true }
 tokio      = { workspace = true }

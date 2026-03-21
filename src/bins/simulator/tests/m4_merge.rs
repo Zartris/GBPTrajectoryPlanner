@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use gbp_comms::RobotBroadcast;
+use gbp_core::GbpConfig;
 use gbp_map::map::*;
 use simulator::agent_runner::AgentRunner;
 use simulator::physics::PhysicsState;
@@ -55,7 +56,7 @@ fn interrobot_factor_spawned_for_merge_scenario() {
     let (tx, rx0) = broadcast::channel::<RobotBroadcast>(64);
     let rx1 = tx.subscribe();
 
-    let mut runner_a = AgentRunner::new(SimComms::new(tx.clone(), rx0), map.clone(), 0);
+    let mut runner_a = AgentRunner::new(SimComms::new(tx.clone(), rx0), map.clone(), 0, &GbpConfig::default());
     {
         let mut traj_a = heapless::Vec::<(EdgeId, f32), { gbp_map::MAX_PATH_EDGES }>::new();
         traj_a.push((EdgeId(0), 5.0)).unwrap();
@@ -64,7 +65,7 @@ fn interrobot_factor_spawned_for_merge_scenario() {
     }
     let mut phys_a = PhysicsState::new(10.0);
 
-    let mut runner_b = AgentRunner::new(SimComms::new(tx.clone(), rx1), map.clone(), 1);
+    let mut runner_b = AgentRunner::new(SimComms::new(tx.clone(), rx1), map.clone(), 1, &GbpConfig::default());
     {
         let mut traj_b = heapless::Vec::<(EdgeId, f32), { gbp_map::MAX_PATH_EDGES }>::new();
         traj_b.push((EdgeId(1), 5.0)).unwrap();
