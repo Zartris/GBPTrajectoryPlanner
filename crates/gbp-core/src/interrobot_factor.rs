@@ -1,4 +1,4 @@
-//! Inter-robot collision avoidance factor (one-sided hinge).
+//! Inter-robot collision avoidance factor (exponential decay penalty).
 //!
 //! Connects only var_idx_a (in this robot's graph).
 //! Robot B's belief is injected externally as (ext_eta_b, ext_lambda_b).

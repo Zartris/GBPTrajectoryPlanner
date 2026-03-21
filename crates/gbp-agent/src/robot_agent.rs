@@ -575,11 +575,14 @@ impl<C: CommsInterface> RobotAgent<C> {
         }
     }
 
-    /// Planned edge IDs with MAX_HORIZON capacity (for broadcasts).
-    fn planned_edge_ids_horizon(&self) -> Vec<EdgeId, MAX_HORIZON> {
+    /// Full planned edge IDs for broadcasts. Uses MAX_PATH_EDGES capacity so
+    /// receivers can map any belief_means[k] to a 3D position via edge walk.
+    /// (Previously capped at MAX_HORIZON=12 which caused fallback to bcast.pos
+    /// on long trajectories with 13+ edges.)
+    fn planned_edge_ids_horizon(&self) -> Vec<EdgeId, { gbp_map::MAX_PATH_EDGES }> {
         let mut pe = Vec::new();
         if let Some(t) = &self.trajectory {
-            for &eid in t.edge_ids().iter().take(MAX_HORIZON) {
+            for &eid in t.edge_ids().iter() {
                 let _ = pe.push(eid);
             }
         }

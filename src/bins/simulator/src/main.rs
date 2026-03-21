@@ -100,7 +100,7 @@ async fn main() {
             (default_start, default_goal, alt_start, default_goal)
         }
     } else if args.scenario == "endcollision" {
-        // P025 → P012: single edge, both robots same route, robot 1 spawns 1s late
+        // P025 → P012: single edge, both robots same route, robot 1 spawns 2s late
         let s = NodeId(22); // P025
         let g = NodeId(11); // P012
         if gbp_map::astar::astar(&map_arc, s, g).is_some() {
@@ -264,7 +264,7 @@ async fn main() {
     tokio::spawn(physics::physics_task(Arc::clone(&physics0)));
     tokio::spawn(agent_task(Arc::clone(&physics0), runner0, tx_state.clone(), 0));
 
-    // Robot 1: delay spawn by 1s in endcollision scenario
+    // Robot 1: delay spawn by 2s in endcollision scenario
     let physics1_clone = Arc::clone(&physics1);
     let runner1_arc = runner1;
     let tx1 = tx_state.clone();

@@ -145,9 +145,9 @@ impl AgentRunner {
     }
 
     /// Snapshot of planned edges for broadcast (using MAX_HORIZON capacity).
-    fn planned_edges_snapshot(&self) -> HVec<EdgeId, MAX_HORIZON> {
+    fn planned_edges_snapshot(&self) -> HVec<EdgeId, { gbp_map::MAX_PATH_EDGES }> {
         let mut pe = HVec::new();
-        for &(eid, _) in self.trajectory_edges.iter().take(MAX_HORIZON) {
+        for &(eid, _) in self.trajectory_edges.iter() {
             let _ = pe.push(eid);
         }
         pe

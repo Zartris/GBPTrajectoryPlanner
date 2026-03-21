@@ -39,7 +39,7 @@ pub struct RobotBroadcast {
     pub position_s:    f32,
     pub velocity:      f32,
     pub pos:           [f32; 3],
-    pub planned_edges: Vec<EdgeId, MAX_HORIZON>,
+    pub planned_edges: Vec<EdgeId, MAX_PATH_EDGES>,
     pub belief_means:  Vec<f32, MAX_HORIZON>,
     pub belief_vars:   Vec<f32, MAX_HORIZON>,
     pub gbp_timesteps: Vec<GBPTimestep, MAX_HORIZON>,
