@@ -26,6 +26,8 @@ pub struct RobotState {
     pub active_factor_count: usize,
     /// Which variable timesteps have active IR factors.
     pub active_ir_timesteps: heapless::Vec<u8, MAX_HORIZON>,
+    pub raw_gbp_velocity: f32,
+    pub min_neighbour_dist_3d: f32,
     /// How many consecutive zero-count updates we've seen (for debounce)
     zero_streak: u8,
 }
@@ -42,6 +44,8 @@ impl Default for RobotState {
             belief_vars: [0.0; MAX_HORIZON],
             active_factor_count: 0,
             active_ir_timesteps: heapless::Vec::new(),
+            raw_gbp_velocity: 0.0,
+            min_neighbour_dist_3d: f32::MAX,
             zero_streak: 0,
         }
     }
@@ -58,6 +62,8 @@ impl RobotState {
         self.belief_means = msg.belief_means;
         self.belief_vars = msg.belief_vars;
         self.active_ir_timesteps = msg.active_ir_timesteps.clone();
+        self.raw_gbp_velocity = msg.raw_gbp_velocity;
+        self.min_neighbour_dist_3d = msg.min_neighbour_dist_3d;
         // Debounce: only show 0 after 3 consecutive zero-count messages
         let new_count = msg.ir_factor_count as usize;
         if new_count > 0 {
@@ -92,7 +98,7 @@ mod tests {
         assert!(s.belief_means.iter().all(|&v| v == 0.0));
         assert!(s.belief_vars.iter().all(|&v| v == 0.0));
         assert_eq!(s.active_factor_count, 0);
-        assert_eq!(s.sigma_dyn, 0.0);
-        assert_eq!(s.sigma_r, 0.0);
+        assert_eq!(s.raw_gbp_velocity, 0.0);
+        assert_eq!(s.min_neighbour_dist_3d, f32::MAX);
     }
 }

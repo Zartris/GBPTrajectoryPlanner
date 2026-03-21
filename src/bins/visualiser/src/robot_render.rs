@@ -436,7 +436,8 @@ mod tests {
         }).unwrap();
 
         let means: Vec<f32> = (0..8).map(|i| i as f32 * 0.5).collect();
-        let positions = belief_tube_positions(&m, EdgeId(0), &means);
+        let edges = &[EdgeId(0)];
+        let positions = belief_tube_positions_trajectory(&m, edges, &means);
         assert_eq!(positions.len(), means.len());
     }
 }

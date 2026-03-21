@@ -100,8 +100,15 @@ fn draw_hud(
     for id in sorted_ids {
         if let Some(state) = states.0.get(&id) {
             egui::Window::new(format!("Robot {}", id)).show(ctx, |ui| {
-                ui.label(format!("Speed:   {}", fmt_velocity(state.velocity)));
+                ui.label(format!("cmd_v:   {}", fmt_velocity(state.velocity)));
+                ui.label(format!("gbp_v:   {}", fmt_velocity(state.raw_gbp_velocity)));
                 ui.label(format!("Edge:    {:?} s={:.2}", state.current_edge, state.position_s));
+                let dist_str = if state.min_neighbour_dist_3d < 100.0 {
+                    format!("{:.2}m", state.min_neighbour_dist_3d)
+                } else {
+                    "—".into()
+                };
+                ui.label(format!("dist3d:  {}", dist_str));
                 ui.label(fmt_factor_count(state.active_factor_count));
             });
         }

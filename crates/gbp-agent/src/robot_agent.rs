@@ -34,6 +34,10 @@ pub struct StepOutput {
     pub position_s: f32,
     pub current_edge: EdgeId,
     pub min_neighbour_dist_3d: f32,
+    /// Belief means for variables 0..K (for diagnostics/visualiser)
+    pub belief_means: [f32; MAX_HORIZON],
+    /// Belief spread: max(means) - min(means). Large values indicate oscillation.
+    pub belief_spread: f32,
 }
 
 pub struct RobotAgent<C: CommsInterface> {
@@ -254,12 +258,23 @@ impl<C: CommsInterface> RobotAgent<C> {
         // 9. Broadcast state
         let _ = self.comms.broadcast(&self.make_broadcast(velocity));
 
+        // 10. Compute belief diagnostics
+        let means = self.belief_means();
+        let mut bmin = f32::MAX;
+        let mut bmax = f32::MIN;
+        for &m in means.iter() {
+            if m < bmin { bmin = m; }
+            if m > bmax { bmax = m; }
+        }
+
         StepOutput {
             velocity,
             raw_gbp_velocity: raw_velocity,
             position_s: self.position_s,
             current_edge: self.current_edge,
             min_neighbour_dist_3d: dist_3d,
+            belief_means: means,
+            belief_spread: bmax - bmin,
         }
     }
 
@@ -377,7 +392,10 @@ impl<C: CommsInterface> RobotAgent<C> {
                     if !self.ir_set.contains(bcast.robot_id, k) {
                         let factor = InterRobotFactor::new(k, D_SAFE, SIGMA_R);
                         if let Ok(idx) = self.graph.add_factor(FactorKind::InterRobot(factor)) {
-                            self.ir_set.insert(bcast.robot_id, k, idx);
+                            if !self.ir_set.insert(bcast.robot_id, k, idx) {
+                                // IR set full — remove orphaned factor
+                                self.graph.remove_factor(idx);
+                            }
                         }
                     }
                 } else {

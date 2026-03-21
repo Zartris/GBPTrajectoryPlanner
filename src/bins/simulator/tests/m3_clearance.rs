@@ -1,6 +1,4 @@
 //! Integration test: Robot B maintains d_safe clearance from Robot A.
-//! Both robots are on the same edge. We run the simulator step loop in-process
-//! for 200 steps and assert the minimum observed 3D distance >= d_safe.
 
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -24,11 +22,15 @@ fn single_edge_map() -> Arc<Map> {
     Arc::new(m)
 }
 
+fn pos_3d_for(map: &Map, edge: EdgeId, local_s: f32) -> [f32; 3] {
+    map.eval_position(edge, local_s).unwrap_or([0.0, 0.0, 0.0])
+}
+
 #[test]
 fn robot_b_maintains_d_safe_clearance_from_robot_a() {
     const D_SAFE: f32 = 0.3;
     const STEPS: usize = 200;
-    const DT: f32 = 1.0 / 20.0; // 20 Hz agent step
+    const DT: f32 = 1.0 / 20.0;
 
     let map = single_edge_map();
     let (tx, rx0) = broadcast::channel::<RobotBroadcast>(64);
@@ -37,19 +39,20 @@ fn robot_b_maintains_d_safe_clearance_from_robot_a() {
     let mut runner_a = AgentRunner::new(SimComms::new(tx.clone(), rx0), map.clone(), 0);
     runner_a.set_single_edge_trajectory(EdgeId(0), 10.0);
     let mut phys_a = PhysicsState::new(10.0);
-    phys_a.position_s = 2.0; // robot A starts at s=2.0
+    phys_a.position_s = 2.0;
 
     let mut runner_b = AgentRunner::new(SimComms::new(tx.clone(), rx1), map.clone(), 1);
     runner_b.set_single_edge_trajectory(EdgeId(0), 10.0);
     let mut phys_b = PhysicsState::new(10.0);
-    phys_b.position_s = 0.0; // robot B starts at s=0.0 (behind A)
+    phys_b.position_s = 0.0;
 
     let mut min_dist = f32::MAX;
 
     for _ in 0..STEPS {
-        // Broadcast current states so each robot sees the other
-        runner_a.broadcast_state(EdgeId(0), phys_a.position_s);
-        runner_b.broadcast_state(EdgeId(0), phys_b.position_s);
+        let pos_a = pos_3d_for(&map, EdgeId(0), phys_a.position_s);
+        let pos_b = pos_3d_for(&map, EdgeId(0), phys_b.position_s);
+        runner_a.broadcast_state(EdgeId(0), phys_a.position_s, pos_a);
+        runner_b.broadcast_state(EdgeId(0), phys_b.position_s, pos_b);
 
         let out_a = runner_a.step(phys_a.position_s);
         let out_b = runner_b.step(phys_b.position_s);
@@ -59,13 +62,11 @@ fn robot_b_maintains_d_safe_clearance_from_robot_a() {
         phys_a.position_s = (phys_a.position_s + phys_a.velocity * DT).clamp(0.0, 10.0);
         phys_b.position_s = (phys_b.position_s + phys_b.velocity * DT).clamp(0.0, 10.0);
 
-        // Use 3D Euclidean distance
         let da = out_a.pos_3d;
         let db = out_b.pos_3d;
         let dist = ((da[0]-db[0]).powi(2) + (da[1]-db[1]).powi(2) + (da[2]-db[2]).powi(2)).sqrt();
         if dist < min_dist { min_dist = dist; }
 
-        // Stop once both robots have reached the end
         if phys_a.position_s >= 9.5 && phys_b.position_s >= 9.5 { break; }
     }
 

@@ -35,8 +35,9 @@ impl InterRobotFactorSet {
         self.entries.iter().any(|(rid, _, _)| *rid == robot_id)
     }
 
-    pub fn insert(&mut self, robot_id: RobotId, k: usize, factor_idx: usize) {
-        let _ = self.entries.push((robot_id, k, factor_idx));
+    /// Insert an IR factor entry. Returns false if the collection is full.
+    pub fn insert(&mut self, robot_id: RobotId, k: usize, factor_idx: usize) -> bool {
+        self.entries.push((robot_id, k, factor_idx)).is_ok()
     }
 
     pub fn factor_idx(&self, robot_id: RobotId, k: usize) -> Option<usize> {

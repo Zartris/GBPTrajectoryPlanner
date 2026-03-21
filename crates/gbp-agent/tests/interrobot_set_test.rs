@@ -10,29 +10,29 @@ fn insert_and_lookup() {
     let mut set = InterRobotFactorSet::new();
     let mut g = make_graph();
     let idx = g.add_factor(FactorKind::Dynamics(DynamicsFactor::new([0,1], 0.1, 0.1, 1.0))).unwrap();
-    set.insert(42u32, idx);
-    assert_eq!(set.factor_idx(42), Some(idx));
-    assert_eq!(set.factor_idx(99), None);
+    assert!(set.insert(42u32, 1, idx));
+    assert_eq!(set.factor_idx(42, 1), Some(idx));
+    assert_eq!(set.factor_idx(42, 2), None);
+    assert_eq!(set.factor_idx(99, 1), None);
 }
 
 #[test]
-fn remove_updates_index_for_swapped_entry() {
+fn remove_robot_updates_index_for_swapped_entry() {
     let mut set = InterRobotFactorSet::new();
     let mut g = make_graph();
 
     let ia = g.add_factor(FactorKind::Dynamics(DynamicsFactor::new([0,1], 0.1, 0.1, 1.0))).unwrap();
     let ib = g.add_factor(FactorKind::Dynamics(DynamicsFactor::new([1,2], 0.1, 0.1, 1.0))).unwrap();
-    let _ic = g.add_factor(FactorKind::Dynamics(DynamicsFactor::new([2,3], 0.1, 0.1, 1.0))).unwrap();
-    set.insert(10, ia);
-    set.insert(20, ib);
-    set.insert(30, _ic);
+    let ic = g.add_factor(FactorKind::Dynamics(DynamicsFactor::new([2,3], 0.1, 0.1, 1.0))).unwrap();
+    assert!(set.insert(10, 1, ia));
+    assert!(set.insert(20, 1, ib));
+    assert!(set.insert(30, 1, ic));
 
-    // Remove robot A (index 0). Swap-remove moves robot C (index 2) to index 0.
-    set.remove(10, &mut g);
+    set.remove_robot(10, &mut g);
     assert_eq!(g.factor_count(), 2);
-    assert!(set.factor_idx(10).is_none());
-    assert_eq!(set.factor_idx(30), Some(0), "C index should have been patched to 0");
-    assert_eq!(set.factor_idx(20), Some(1));
+    assert!(!set.contains_robot(10));
+    assert!(set.factor_idx(30, 1).is_some());
+    assert!(set.factor_idx(20, 1).is_some());
 }
 
 #[test]
@@ -41,10 +41,25 @@ fn remove_last_does_not_need_patching() {
     let mut g = make_graph();
     let ia = g.add_factor(FactorKind::Dynamics(DynamicsFactor::new([0,1], 0.1, 0.1, 1.0))).unwrap();
     let ib = g.add_factor(FactorKind::Dynamics(DynamicsFactor::new([1,2], 0.1, 0.1, 1.0))).unwrap();
-    set.insert(10, ia);
-    set.insert(20, ib);
-    set.remove(20, &mut g);
+    assert!(set.insert(10, 1, ia));
+    assert!(set.insert(20, 1, ib));
+    set.remove_robot(20, &mut g);
     assert_eq!(g.factor_count(), 1);
-    assert!(set.factor_idx(20).is_none());
-    assert_eq!(set.factor_idx(10), Some(0));
+    assert!(!set.contains_robot(20));
+    assert_eq!(set.factor_idx(10, 1), Some(0));
+}
+
+#[test]
+fn contains_and_count() {
+    let mut set = InterRobotFactorSet::new();
+    assert!(!set.contains(5, 1));
+    assert!(set.insert(5, 1, 10));
+    assert!(set.insert(5, 2, 11));
+    assert!(set.insert(7, 1, 12));
+    assert!(set.contains(5, 1));
+    assert!(set.contains(5, 2));
+    assert!(!set.contains(5, 3));
+    assert_eq!(set.count_for(5), 2);
+    assert_eq!(set.count_for(7), 1);
+    assert_eq!(set.count(), 3);
 }

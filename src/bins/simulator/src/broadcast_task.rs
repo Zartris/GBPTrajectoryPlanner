@@ -27,6 +27,8 @@ pub fn build_robot_state_msg(edge_id: EdgeId, position_s: f32, v_nom: f32) -> Ro
         active_factors: heapless::Vec::new(),
             ir_factor_count: 0,
             active_ir_timesteps: heapless::Vec::new(),
+            raw_gbp_velocity: 0.0,
+            min_neighbour_dist_3d: f32::MAX,
     }
 }
 

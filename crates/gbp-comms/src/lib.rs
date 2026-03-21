@@ -65,6 +65,10 @@ pub struct RobotStateMsg {
     /// Which variable timesteps (k=0..K) have active IR factors.
     /// Used by the visualiser to draw factor links at the correct positions.
     pub active_ir_timesteps: Vec<u8, MAX_HORIZON>,
+    /// Raw GBP velocity (before DynamicConstraints clamping).
+    pub raw_gbp_velocity: f32,
+    /// Minimum 3D distance to any neighbour sharing planned edges.
+    pub min_neighbour_dist_3d: f32,
 }
 
 /// Visualiser -> Bridge/Simulator
