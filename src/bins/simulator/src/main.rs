@@ -166,12 +166,37 @@ async fn main() {
     if start0 == start1 && !delayed_start {
         physics0.lock().unwrap().position_s = 0.2; // slight head start in follow mode
     }
-    // When both robots share the same goal, cap robot 1's total_length so it stops
-    // d_safe before the goal node. This prevents the end-node collision that the
-    // reactive safety cap can't fully prevent due to dynamics taper dominance.
-    const D_SAFE: f32 = 1.3; // center-to-center: chassis 1.15m + 0.15m margin
+    // When both robots share the same goal, Robot 1 must stop d_safe before
+    // the goal. Without this, both robots' physics clamp at the same total_length,
+    // causing dist=0 pile-up at the edge end. We shorten Robot 1's trajectory
+    // so its v_nom taper decelerates to zero d_safe before the goal, and cap
+    // the physics to match.
+    const D_SAFE: f32 = 1.3;
+    if goal0 == goal1 {
+        let mut r1 = runner1.lock().unwrap();
+        // Shorten the last edge in R1's trajectory by d_safe so the
+        // trapezoidal v_nom taper brings R1 to a stop earlier.
+        let shortened = (total_length1 - D_SAFE).max(0.1);
+        // Re-build trajectory with shortened last edge
+        let mut traj = HVec::<(EdgeId, f32), { gbp_map::MAX_PATH_EDGES }>::new();
+        let edges = r1.planned_edge_ids();
+        let mut remaining = shortened;
+        for &eid in edges.iter() {
+            if let Some(idx) = map_arc.edge_index(eid) {
+                let len = map_arc.edges[idx].geometry.length();
+                let use_len = len.min(remaining);
+                if use_len > 0.01 {
+                    let _ = traj.push((eid, use_len));
+                }
+                remaining -= use_len;
+                if remaining <= 0.0 { break; }
+            }
+        }
+        r1.set_trajectory(traj);
+        drop(r1);
+    }
     let r1_total = if goal0 == goal1 {
-        (total_length1 - D_SAFE).max(0.1) // stop d_safe before goal
+        (total_length1 - D_SAFE).max(0.1)
     } else {
         total_length1
     };
