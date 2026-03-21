@@ -28,6 +28,24 @@ services:
       - ${HOME}/.gitconfig:/home/${USER}/.gitconfig:ro
       # gh CLI auth — auth once on host with `gh auth login`, persists across rebuilds
       - ${HOME}/.config/gh:/home/${USER}/.config/gh
+      # X11 forwarding — lets Bevy/visualiser open a window on the host display
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Wayland socket — WSLg exposes this; faster than X11 forwarding
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/wayland-0:/tmp/runtime-${UID:-1000}/wayland-0:rw
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - WAYLAND_DISPLAY=wayland-0
+      - XDG_RUNTIME_DIR=/tmp/runtime-${UID:-1000}
+      # NVIDIA GPU passthrough (requires nvidia-container-toolkit on host)
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, graphics, compute, utility, display]
     stdin_open: true
     tty: true
     working_dir: /repo

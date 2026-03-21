@@ -89,6 +89,9 @@ mod tests {
             planned_edges: heapless::Vec::new(),
             active_factors: heapless::Vec::new(),
             ir_factor_count: 0,
+            active_ir_timesteps: heapless::Vec::new(),
+            raw_gbp_velocity: 0.0,
+            min_neighbour_dist_3d: f32::MAX,
         }
     }
 

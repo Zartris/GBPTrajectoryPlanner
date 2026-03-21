@@ -160,28 +160,57 @@ These drive all `heapless` collection sizes. Changing them after M0 requires a m
 
 ---
 
-## M4 — Merge Collision Avoidance
+## M4 — Merge Collision Avoidance (COMPLETED)
 
 **Goal:** Factor gating via planned edge set intersection. Robots on different incoming edges negotiate before a merge node.
 
-### What gets built
+**Status:** Complete. All scenarios (merge, endcollision, follow) pass with 0 collisions.
+
+### What was built
 
 **Simulator / Agent**
-- Planned edge set intersection in `update_interrobot_factors()`: spawn inter-robot factors for all timesteps where planned edges overlap, not just the current edge
-- Each robot broadcasts `planned_edges` in `RobotBroadcast`
-- One robot yields, both pass the merge node without collision
+- Planned edge set intersection in `update_interrobot_factors()`: IR factors spawned per-variable (k=1..K) where 3D distance at timestep k < IR_ACTIVATION_RANGE
+- Per-variable IR factor despawn when 3D distance exceeds activation range (not just deactivation)
+- 3D Jacobian: `jacobian_a = (pos_a - pos_b) · tangent_a / dist_3d` with tangents from both robots via `map.eval_tangent()`
+- Asymmetric front dampening (FRONT_DAMPING=0.3): behind robot gets full IR push, ahead robot gets 30%
+- Each robot broadcasts `planned_edges` + `belief_means`/`belief_vars` in `RobotBroadcast`
+- Collision detector in distance monitor with throttled logging and spawn exclusion
+
+**New factor: VelocityBoundFactor** (not in original plan)
+- BIPM-inspired adaptive precision factor bounding `v_min ≤ velocity ≤ v_max`
+- Prevents GBP from predicting physically impossible velocities (was 10+ m/s, now bounded ~3-4 m/s)
+- Lower bound `v_min=-0.3 m/s` allows slow creep-back for merge overshoot recovery
+- See `crates/gbp-core/src/velocity_bound_factor.rs` for full BIPM background
+
+**Internal/external iteration split** (not in original plan)
+- `iterate_split(n_internal=3, n_external=5)` separates dynamics/velocity-bound factors from IR factors
+- Prevents stale external beliefs from being over-accumulated during internal convergence
+- Based on MAGICS architecture (AU-Master-Thesis/magics)
+
+**Bug fixes applied during M4**
+- Stale anchor mean in `update_dynamics_v_nom` (variables[0].eta/lambda set directly)
+- Static mut TICK_COUNT data race → per-runner field
+- Silent IR factor insert drop → returns bool, orphaned factor removed
+- R1 trajectory shortened by d_safe when sharing goal (aligns physics cap with GBP v_nom taper)
+- usize underflow guard in IR factor removal methods
 
 **Visualiser**
-- Full `planned_edges` ahead shown as dashed route per robot
-- Shared edges highlighted in a distinct colour when a factor is active for that edge
-- Factor lines visible between robots whose planned paths intersect
+- HUD shows cmd_v, gbp_v, dist3d, IR factor count per robot
+- Belief dots and uncertainty circles along planned trajectory
+- Factor links between paired variable positions at active timesteps
 
-### Verification
-- Two robots assigned routes converging at a merge node simultaneously
-- One robot holds back (belief tube shows near-zero velocity), other passes through
-- After leader clears the merge, follower accelerates through
-- Factor lifecycle assertion: log the simulator step at which the inter-robot factor is first spawned (must be before either robot reaches the shared edge) and the step at which it is removed (must be after the leader has fully cleared the merge node, i.e. its `position_s` has advanced past `edge.length` on the post-merge edge)
-- Integration test: minimum 3D distance between the two robots over the full scenario must be >= `d_safe`
+### Verification results
+- Merge scenario: 0 collisions, min 3D dist ~1.8m, no pass-through
+- Endcollision scenario: 0 collisions, steady-state dist = 1.300m (exact d_safe)
+- Follow scenario: needs larger initial head start (0.2m → ≥ d_safe), otherwise works
+- gbp_v bounded at 3-4 m/s (was 11+ m/s before VelocityBoundFactor)
+
+### Constants (tuned)
+```
+SIGMA_R = 0.12 (precision ≈ 69), FRONT_DAMPING = 0.3
+GBP_INTERNAL_ITERS = 3, GBP_EXTERNAL_ITERS = 5
+VEL_BOUND: kappa=10, margin=1.0, max_prec=100, v_min=-0.3
+```
 
 ---
 

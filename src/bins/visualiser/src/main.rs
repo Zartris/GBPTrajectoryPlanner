@@ -41,6 +41,7 @@ fn main() {
             primary_window: Some(Window {
                 title: "GBP Trajectory Planner".into(),
                 resolution: (1280u32, 720u32).into(),
+                present_mode: bevy::window::PresentMode::AutoNoVsync,
                 ..default()
             }),
             ..default()

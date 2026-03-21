@@ -23,6 +23,8 @@ pub struct AgentRunner {
     total_length: f32,
     /// Last reported edge (for transition logging)
     last_reported_edge: Option<EdgeId>,
+    /// Tick counter for log throttling (per-robot, no shared mutable state)
+    pub tick_count: u32,
 }
 
 impl AgentRunner {
@@ -35,6 +37,7 @@ impl AgentRunner {
             trajectory_edges: HVec::new(),
             total_length: 0.0,
             last_reported_edge: None,
+            tick_count: 0,
         }
     }
 
@@ -83,6 +86,13 @@ impl AgentRunner {
             self.last_reported_edge = Some(current_edge);
         }
 
+        // Compute 3D position BEFORE step so safety cap can use it
+        let pos_3d_map = match self._map.eval_position(current_edge, local_s) {
+            Some(p) => p,
+            None => [0.0, 0.0, 0.0],
+        };
+        self.agent.set_pos_3d(pos_3d_map);
+
         let obs = ObservationUpdate {
             position_s: global_s,
             velocity: 0.0,
@@ -90,11 +100,7 @@ impl AgentRunner {
         };
         let out = self.agent.step(obs);
 
-        // 3D position from the map
-        let pos_3d = match self._map.eval_position(current_edge, local_s) {
-            Some(p) => [p[0], p[2], -p[1]],
-            None => [0.0, 0.0, 0.0],
-        };
+        let pos_3d = [pos_3d_map[0], pos_3d_map[2], -pos_3d_map[1]]; // map -> Bevy coords
 
         // Extract belief means and variances
         let belief_means = self.agent.belief_means();
@@ -102,22 +108,27 @@ impl AgentRunner {
 
         StepOut {
             velocity: out.velocity,
+            raw_gbp_velocity: out.raw_gbp_velocity,
+            min_neighbour_dist_3d: out.min_neighbour_dist_3d,
             current_edge,
             local_s,
             pos_3d,
             active_factor_count: self.agent.interrobot_factor_count(),
+            active_ir_timesteps: self.agent.active_ir_timesteps(),
             belief_means,
             belief_vars,
             max_position: self.agent.last_max_position(),
+            belief_spread: out.belief_spread,
         }
     }
 
     /// Broadcast this robot's current state so other robots' SimComms can receive it.
-    pub fn broadcast_state(&mut self, current_edge: EdgeId, position_s: f32) {
+    pub fn broadcast_state(&mut self, current_edge: EdgeId, position_s: f32, pos_3d: [f32; 3]) {
         let msg = RobotBroadcast {
             robot_id: self.robot_id,
             current_edge,
             position_s,
+            pos: pos_3d,
             planned_edges: self.planned_edges_snapshot(),
             ..Default::default()
         };
@@ -134,9 +145,9 @@ impl AgentRunner {
     }
 
     /// Snapshot of planned edges for broadcast (using MAX_HORIZON capacity).
-    fn planned_edges_snapshot(&self) -> HVec<EdgeId, MAX_HORIZON> {
+    fn planned_edges_snapshot(&self) -> HVec<EdgeId, { gbp_map::MAX_PATH_EDGES }> {
         let mut pe = HVec::new();
-        for &(eid, _) in self.trajectory_edges.iter().take(MAX_HORIZON) {
+        for &(eid, _) in self.trajectory_edges.iter() {
             let _ = pe.push(eid);
         }
         pe
@@ -145,23 +156,27 @@ impl AgentRunner {
 
 pub struct StepOut {
     pub velocity: f32,
+    pub raw_gbp_velocity: f32,
+    pub min_neighbour_dist_3d: f32,
     pub current_edge: EdgeId,
     pub local_s: f32,
     pub pos_3d: [f32; 3],
     pub active_factor_count: usize,
+    pub active_ir_timesteps: HVec<u8, MAX_HORIZON>,
     pub belief_means: [f32; MAX_HORIZON],
     pub belief_vars: [f32; MAX_HORIZON],
     pub max_position: f32,
+    pub belief_spread: f32,
 }
 
-/// Runs at 20 Hz: reads global position, steps agent, writes velocity back.
+/// Runs at 50 Hz: reads global position, steps agent, writes velocity back.
 pub async fn agent_task(
     physics: Arc<Mutex<PhysicsState>>,
     runner: Arc<Mutex<AgentRunner>>,
     tx: broadcast::Sender<RobotStateMsg>,
     robot_id: u32,
 ) {
-    let mut ticker = interval(Duration::from_millis(50)); // 20 Hz
+    let mut ticker = interval(Duration::from_millis(20)); // 50 Hz (matches physics)
     loop {
         ticker.tick().await;
 
@@ -170,25 +185,35 @@ pub async fn agent_task(
         let out = {
             let mut r = runner.lock().unwrap_or_else(|e| e.into_inner());
             let out = r.step(global_s);
-            if out.active_factor_count > 0 {
+            // Only log every ~1s (every 50th tick at 50Hz) to reduce spam
+            r.tick_count += 1;
+            if r.tick_count % 50 == 0 && out.active_factor_count > 0 {
                 tracing::info!(
-                    "robot {}: s={:.3} v={:.3} ir_factors={}",
-                    robot_id, global_s, out.velocity, out.active_factor_count,
+                    "R{}: s={:.2} gbp_v={:.2} cmd_v={:.2} dist3d={:.2} ir={} spread={:.2}",
+                    robot_id, global_s, out.raw_gbp_velocity, out.velocity,
+                    out.min_neighbour_dist_3d, out.active_factor_count,
+                    out.belief_spread,
                 );
             }
-            // Broadcast state after step so other robots can see us
-            r.broadcast_state(out.current_edge, global_s);
+            // Log belief oscillation: if spread > 5m, beliefs are flipping wildly
+            if out.belief_spread > 5.0 && r.tick_count % 25 == 0 {
+                tracing::warn!(
+                    "R{} OSCILLATION: spread={:.1}m beliefs=[{:.1},{:.1},{:.1},...,{:.1},{:.1}] s={:.2}",
+                    robot_id, out.belief_spread,
+                    out.belief_means[0], out.belief_means[1], out.belief_means[2],
+                    out.belief_means[10], out.belief_means[11],
+                    global_s,
+                );
+            }
+            // NOTE: step() already broadcasts full RobotBroadcast with belief_means/vars
+            // via make_broadcast(). Do NOT call broadcast_state() here — it sends a partial
+            // message with default beliefs, overwriting the full one.
             out
         };
 
         {
             let mut p = physics.lock().unwrap_or_else(|e| e.into_inner());
             p.velocity = out.velocity;
-            // Hard position clamp: if we've crept past max_position, snap back
-            if out.max_position < f32::MAX && p.position_s > out.max_position {
-                p.position_s = out.max_position;
-                p.velocity = 0.0;
-            }
         }
 
         let planned_edges = runner.lock().unwrap_or_else(|e| e.into_inner()).planned_edge_ids();
@@ -212,6 +237,9 @@ pub async fn agent_task(
                 }
                 af
             },
+            active_ir_timesteps: out.active_ir_timesteps,
+            raw_gbp_velocity: out.raw_gbp_velocity,
+            min_neighbour_dist_3d: out.min_neighbour_dist_3d,
         };
         let _ = tx.send(msg);
     }
@@ -323,8 +351,8 @@ mod tests {
         let mut runner1 = AgentRunner::new(comms1, map.clone(), 1);
         runner1.set_single_edge_trajectory(EdgeId(0), 5.0);
 
-        // Robot 1 broadcasts its state so robot 0 can see it
-        runner1.broadcast_state(EdgeId(0), 4.0);
+        // Robot 1 broadcasts its state so robot 0 can see it (within IR_ACTIVATION_RANGE=3.0m)
+        runner1.broadcast_state(EdgeId(0), 2.5, [2.5, 0.0, 0.0]);
 
         // Robot 0 steps — should spawn InterRobotFactor because they share EdgeId(0)
         let out = runner0.step(0.5);
@@ -342,7 +370,7 @@ mod tests {
         runner0.set_single_edge_trajectory(EdgeId(0), 5.0);
         let mut runner1 = AgentRunner::new(comms1, map.clone(), 1);
         runner1.set_single_edge_trajectory(EdgeId(0), 5.0);
-        runner1.broadcast_state(EdgeId(0), 3.5);
+        runner1.broadcast_state(EdgeId(0), 3.5, [3.5, 0.0, 0.0]);
         // Steps with GBP iterate — should not panic
         for s in [0.5_f32, 1.0, 1.5, 2.0] {
             let _ = runner0.step(s);

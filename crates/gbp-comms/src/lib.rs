@@ -39,7 +39,7 @@ pub struct RobotBroadcast {
     pub position_s:    f32,
     pub velocity:      f32,
     pub pos:           [f32; 3],
-    pub planned_edges: Vec<EdgeId, MAX_HORIZON>,
+    pub planned_edges: Vec<EdgeId, MAX_PATH_EDGES>,
     pub belief_means:  Vec<f32, MAX_HORIZON>,
     pub belief_vars:   Vec<f32, MAX_HORIZON>,
     pub gbp_timesteps: Vec<GBPTimestep, MAX_HORIZON>,
@@ -62,6 +62,13 @@ pub struct RobotStateMsg {
     /// Total number of active inter-robot factors (can exceed active_factors.len()
     /// since active_factors only lists neighbour IDs, not per-variable factor count).
     pub ir_factor_count: u16,
+    /// Which variable timesteps (k=0..K) have active IR factors.
+    /// Used by the visualiser to draw factor links at the correct positions.
+    pub active_ir_timesteps: Vec<u8, MAX_HORIZON>,
+    /// Raw GBP velocity (before DynamicConstraints clamping).
+    pub raw_gbp_velocity: f32,
+    /// Minimum 3D distance to any neighbour sharing planned edges.
+    pub min_neighbour_dist_3d: f32,
 }
 
 /// Visualiser -> Bridge/Simulator

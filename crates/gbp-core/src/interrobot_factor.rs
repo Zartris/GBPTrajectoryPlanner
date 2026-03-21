@@ -1,7 +1,20 @@
-//! Inter-robot collision avoidance factor.
+//! Inter-robot collision avoidance factor (exponential decay penalty).
 //!
 //! Connects only var_idx_a (in this robot's graph).
 //! Robot B's belief is injected externally as (ext_eta_b, ext_lambda_b).
+//!
+//! Uses exponential decay precision — smooth everywhere, no discontinuities:
+//!   - `dist <= d_safe`: full precision (collision zone, maximum repulsion)
+//!   - `dist > d_safe`: precision decays as `exp(-alpha * (dist - d_safe))`
+//! The smooth decay eliminates GBP oscillation caused by hard cutoffs while
+//! still providing early warning. At 2× d_safe, precision is ~2% of full.
+//!
+//! NOTE on `linearize()` return values: Because this is a unary factor (after Schur
+//! complement marginalization over robot B), `linearize()` returns the pre-computed
+//! information-form message (msg_eta, msg_lambda) in the `residual` and `precision`
+//! fields of `LinearizedFactor`. These are NOT a raw residual and precision — they
+//! are the final factor-to-variable message. The `jacobian` field is unused for
+//! unary factors in `factor_graph.rs`.
 
 use heapless::Vec;
 use crate::factor_node::{Factor, LinearizedFactor};
@@ -45,9 +58,25 @@ impl Factor for InterRobotFactor {
     fn is_active(&self) -> bool { self.active }
 
     fn linearize(&self, _variables: &[VariableNode]) -> LinearizedFactor {
+        // Exponential decay precision — smooth everywhere, no discontinuities.
+        //
+        //   dist <= d_safe  → full precision (collision zone)
+        //   dist > d_safe   → precision decays as exp(-alpha * (dist - d_safe))
+        //
+        // alpha controls the decay rate. Higher alpha = faster decay = less influence at distance.
+        // With alpha=3.0 and d_safe=1.3: at 2*d_safe (2.6m) precision is ~2% of full.
+        const DECAY_ALPHA: f32 = 3.0;
+
         let residual = self.d_safe - self.dist;
         let sigma_r = f32::max(self.sigma_r, 1e-6);
-        let prec = 1.0 / (sigma_r * sigma_r);
+        let full_prec = 1.0 / (sigma_r * sigma_r);
+
+        let prec = if self.dist <= self.d_safe {
+            full_prec
+        } else {
+            let decay = libm::expf(-DECAY_ALPHA * (self.dist - self.d_safe));
+            full_prec * decay
+        };
 
         // Joint information matrix (2x2, pairwise between A and B)
         let xi_aa = prec * self.jacobian_a * self.jacobian_a;
