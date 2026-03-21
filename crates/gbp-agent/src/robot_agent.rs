@@ -68,7 +68,7 @@ unsafe impl<C: CommsInterface + Send> Send for RobotAgent<C> {}
 
 impl<C: CommsInterface> RobotAgent<C> {
     pub fn new(comms: C, map: &Map, robot_id: RobotId) -> Self {
-        let mut graph: FactorGraph<MAX_HORIZON, MAX_FACTORS> = FactorGraph::new(0.0, 100.0);
+        let mut graph: FactorGraph<MAX_HORIZON, MAX_FACTORS> = FactorGraph::new(0.0, 100.0, 0.5);
         let mut dyn_indices = [0usize; NUM_DYN_FACTORS];
 
         // Add K-1 permanent dynamics factors
@@ -82,7 +82,7 @@ impl<C: CommsInterface> RobotAgent<C> {
         let mut vel_bound_indices = [0usize; NUM_VEL_BOUND_FACTORS];
         for k in 0..NUM_VEL_BOUND_FACTORS {
             let idx = graph.add_factor(FactorKind::VelocityBound(
-                VelocityBoundFactor::new([k, k + 1], DT, 2.5)
+                VelocityBoundFactor::new([k, k + 1], DT, 2.5, -0.3, 10.0, 1.0, 100.0)
             )).expect("BUG: MAX_FACTORS too small for velocity bound factors");
             vel_bound_indices[k] = idx;
         }
@@ -393,7 +393,7 @@ impl<C: CommsInterface> RobotAgent<C> {
                 if dist < activation_range {
                     // Add factor at this timestep if we don't have one already
                     if !self.ir_set.contains(bcast.robot_id, k) {
-                        let factor = InterRobotFactor::new(k, D_SAFE, SIGMA_R);
+                        let factor = InterRobotFactor::new(k, D_SAFE, SIGMA_R, 3.0);
                         if let Ok(idx) = self.graph.add_factor(FactorKind::InterRobot(factor)) {
                             if !self.ir_set.insert(bcast.robot_id, k, idx) {
                                 // IR set full — remove orphaned factor

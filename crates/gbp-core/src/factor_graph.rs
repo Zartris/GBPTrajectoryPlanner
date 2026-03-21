@@ -11,23 +11,23 @@ use heapless::Vec;
 use crate::factor_node::{Factor, FactorKind, FactorNode};
 use crate::variable_node::VariableNode;
 
-/// Damping factor for message updates. 1.0 = no damping, 0.5 = average old/new.
-/// Lower values improve convergence stability in loopy graphs at the cost of speed.
-const MSG_DAMPING: f32 = 0.5;
-
 /// GBP factor graph with const-generic capacity.
 /// K = number of variables (timestep horizon), F = max factors.
 pub struct FactorGraph<const K: usize, const F: usize> {
     pub variables: [VariableNode; K],
     factors: Vec<FactorNode, F>,
+    msg_damping: f32,
 }
 
 impl<const K: usize, const F: usize> FactorGraph<K, F> {
     /// Create graph with K variables all initialised to (mean, variance).
-    pub fn new(init_mean: f32, init_variance: f32) -> Self {
+    /// `msg_damping`: 1.0 = no damping, 0.5 = average old/new. Lower values
+    /// improve convergence stability in loopy graphs at the cost of speed.
+    pub fn new(init_mean: f32, init_variance: f32, msg_damping: f32) -> Self {
         Self {
             variables: core::array::from_fn(|_| VariableNode::new(init_mean, init_variance)),
             factors: Vec::new(),
+            msg_damping,
         }
     }
 
@@ -111,8 +111,8 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
                 let lf = f.kind.as_factor().linearize(&self.variables);
                 let new_eta = lf.residual;
                 let new_lambda = lf.precision;
-                f.msg_eta[0]    = MSG_DAMPING * new_eta    + (1.0 - MSG_DAMPING) * f.msg_eta[0];
-                f.msg_lambda[0] = MSG_DAMPING * new_lambda + (1.0 - MSG_DAMPING) * f.msg_lambda[0];
+                f.msg_eta[0]    = self.msg_damping * new_eta    + (1.0 - self.msg_damping) * f.msg_eta[0];
+                f.msg_lambda[0] = self.msg_damping * new_lambda + (1.0 - self.msg_damping) * f.msg_lambda[0];
 
             } else if var_indices.len() == 2 {
                 let [idx0, idx1] = [var_indices[0], var_indices[1]];
@@ -142,16 +142,16 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
                 if denom1.abs() > 1e-12 {
                     let new_lambda0 = xi_00 - xi_01 * xi_01 / denom1;
                     let new_eta0    = zeta_0 - xi_01 * (zeta_1 + eta1_cav) / denom1;
-                    f.msg_lambda[0] = MSG_DAMPING * new_lambda0 + (1.0 - MSG_DAMPING) * f.msg_lambda[0];
-                    f.msg_eta[0]    = MSG_DAMPING * new_eta0    + (1.0 - MSG_DAMPING) * f.msg_eta[0];
+                    f.msg_lambda[0] = self.msg_damping * new_lambda0 + (1.0 - self.msg_damping) * f.msg_lambda[0];
+                    f.msg_eta[0]    = self.msg_damping * new_eta0    + (1.0 - self.msg_damping) * f.msg_eta[0];
                 }
 
                 let denom0 = xi_00 + lambda0_cav;
                 if denom0.abs() > 1e-12 {
                     let new_lambda1 = xi_11 - xi_01 * xi_01 / denom0;
                     let new_eta1    = zeta_1 - xi_01 * (zeta_0 + eta0_cav) / denom0;
-                    f.msg_lambda[1] = MSG_DAMPING * new_lambda1 + (1.0 - MSG_DAMPING) * f.msg_lambda[1];
-                    f.msg_eta[1]    = MSG_DAMPING * new_eta1    + (1.0 - MSG_DAMPING) * f.msg_eta[1];
+                    f.msg_lambda[1] = self.msg_damping * new_lambda1 + (1.0 - self.msg_damping) * f.msg_lambda[1];
+                    f.msg_eta[1]    = self.msg_damping * new_eta1    + (1.0 - self.msg_damping) * f.msg_eta[1];
                 }
             }
         }
@@ -171,8 +171,8 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
                 let new_eta = lf.residual;
                 let new_lambda = lf.precision;
                 // Apply damping
-                f.msg_eta[0]    = MSG_DAMPING * new_eta    + (1.0 - MSG_DAMPING) * f.msg_eta[0];
-                f.msg_lambda[0] = MSG_DAMPING * new_lambda + (1.0 - MSG_DAMPING) * f.msg_lambda[0];
+                f.msg_eta[0]    = self.msg_damping * new_eta    + (1.0 - self.msg_damping) * f.msg_eta[0];
+                f.msg_lambda[0] = self.msg_damping * new_lambda + (1.0 - self.msg_damping) * f.msg_lambda[0];
 
             } else if var_indices.len() == 2 {
                 // Pairwise factor: Schur complement marginalization.
@@ -208,8 +208,8 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
                 if denom1.abs() > 1e-12 {
                     let new_lambda0 = xi_00 - xi_01 * xi_01 / denom1;
                     let new_eta0    = zeta_0 - xi_01 * (zeta_1 + eta1_cav) / denom1;
-                    f.msg_lambda[0] = MSG_DAMPING * new_lambda0 + (1.0 - MSG_DAMPING) * f.msg_lambda[0];
-                    f.msg_eta[0]    = MSG_DAMPING * new_eta0    + (1.0 - MSG_DAMPING) * f.msg_eta[0];
+                    f.msg_lambda[0] = self.msg_damping * new_lambda0 + (1.0 - self.msg_damping) * f.msg_lambda[0];
+                    f.msg_eta[0]    = self.msg_damping * new_eta0    + (1.0 - self.msg_damping) * f.msg_eta[0];
                 }
 
                 // Message to variable 1 (marginalize out variable 0)
@@ -217,8 +217,8 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
                 if denom0.abs() > 1e-12 {
                     let new_lambda1 = xi_11 - xi_01 * xi_01 / denom0;
                     let new_eta1    = zeta_1 - xi_01 * (zeta_0 + eta0_cav) / denom0;
-                    f.msg_lambda[1] = MSG_DAMPING * new_lambda1 + (1.0 - MSG_DAMPING) * f.msg_lambda[1];
-                    f.msg_eta[1]    = MSG_DAMPING * new_eta1    + (1.0 - MSG_DAMPING) * f.msg_eta[1];
+                    f.msg_lambda[1] = self.msg_damping * new_lambda1 + (1.0 - self.msg_damping) * f.msg_lambda[1];
+                    f.msg_eta[1]    = self.msg_damping * new_eta1    + (1.0 - self.msg_damping) * f.msg_eta[1];
                 }
             }
         }

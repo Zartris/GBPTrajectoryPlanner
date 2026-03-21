@@ -72,6 +72,8 @@ pub struct VelocityBoundFactor {
     kappa: f32,
     /// Distance from limit (in m/s) at which the barrier begins to activate.
     margin: f32,
+    /// Maximum precision value (hard clamp at constraint boundary).
+    max_precision: f32,
 }
 
 impl VelocityBoundFactor {
@@ -80,14 +82,19 @@ impl VelocityBoundFactor {
     /// - `var_indices`: indices of `[s_k, s_{k+1}]` in the factor graph.
     /// - `dt`: timestep between the two variables.
     /// - `v_max`: maximum allowed forward velocity.
-    pub fn new(var_indices: [usize; 2], dt: f32, v_max: f32) -> Self {
+    /// - `v_min`: minimum allowed velocity (slightly negative allows creep-back).
+    /// - `kappa`: barrier steepness. Higher = sharper activation.
+    /// - `margin`: distance below `v_max` at which the barrier begins to activate (m/s).
+    /// - `max_precision`: precision hard clamp at and beyond the constraint boundary.
+    pub fn new(var_indices: [usize; 2], dt: f32, v_max: f32, v_min: f32, kappa: f32, margin: f32, max_precision: f32) -> Self {
         Self {
             var_indices,
             dt: f32::max(dt, 1e-6),
             v_max,
-            v_min: -0.3, // allow slow creep-back (0.3 m/s reverse)
-            kappa: 10.0,
-            margin: 1.0,
+            v_min,
+            kappa,
+            margin,
+            max_precision,
         }
     }
 
@@ -97,16 +104,15 @@ impl VelocityBoundFactor {
     }
 
     /// BIPM-inspired adaptive precision for a single constraint g <= 0.
-    /// Returns 0 when well under limit, rising to MAX_PREC at the boundary.
-    fn barrier_precision(g: f32, margin: f32, kappa: f32) -> f32 {
-        const MAX_PREC: f32 = 100.0;
-        if g < -margin {
+    /// Returns 0 when well under limit, rising to `self.max_precision` at the boundary.
+    fn barrier_precision(&self, g: f32) -> f32 {
+        if g < -self.margin {
             0.0
         } else if g < -1e-4 {
-            let raw = 1.0 / (kappa * g * g);
-            if raw < MAX_PREC { raw } else { MAX_PREC }
+            let raw = 1.0 / (self.kappa * g * g);
+            if raw < self.max_precision { raw } else { self.max_precision }
         } else {
-            MAX_PREC
+            self.max_precision
         }
     }
 }
@@ -130,8 +136,8 @@ impl Factor for VelocityBoundFactor {
         let g_lower = self.v_min - velocity;
 
         // Compute barrier precision for each bound independently
-        let prec_upper = Self::barrier_precision(g_upper, self.margin, self.kappa);
-        let prec_lower = Self::barrier_precision(g_lower, self.margin, self.kappa);
+        let prec_upper = self.barrier_precision(g_upper);
+        let prec_lower = self.barrier_precision(g_lower);
 
         // The active constraint is whichever has higher precision (closer to violation).
         // Use its residual and precision. If neither is active, factor is dormant.
@@ -182,7 +188,7 @@ mod tests {
         // velocity = (1.1 - 1.0) / 0.1 = 1.0 m/s, v_max = 2.5
         // g = 1.0 - 2.5 = -1.5, which is < -margin(1.0) => precision = 0
         let vars = make_vars(1.0, 1.1);
-        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5);
+        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5, -0.3, 10.0, 1.0, 100.0);
         let lf = factor.linearize(&vars);
         assert_eq!(lf.precision, 0.0);
     }
@@ -194,12 +200,12 @@ mod tests {
 
         // velocity = 2.2 m/s => g = -0.3 (in barrier zone)
         let vars_far = make_vars(0.0, 0.22);
-        let f_far = VelocityBoundFactor::new([0, 1], dt, v_max);
+        let f_far = VelocityBoundFactor::new([0, 1], dt, v_max, -0.3, 10.0, 1.0, 100.0);
         let lf_far = f_far.linearize(&vars_far);
 
         // velocity = 2.4 m/s => g = -0.1 (closer to limit)
         let vars_close = make_vars(0.0, 0.24);
-        let f_close = VelocityBoundFactor::new([0, 1], dt, v_max);
+        let f_close = VelocityBoundFactor::new([0, 1], dt, v_max, -0.3, 10.0, 1.0, 100.0);
         let lf_close = f_close.linearize(&vars_close);
 
         assert!(lf_far.precision > 0.0, "should be in barrier zone");
@@ -216,7 +222,7 @@ mod tests {
         // velocity = (0.3 - 0.0) / 0.1 = 3.0 m/s, v_max = 2.5
         // g = 0.5 >= -1e-4 => precision = 100
         let vars = make_vars(0.0, 0.3);
-        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5);
+        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5, -0.3, 10.0, 1.0, 100.0);
         let lf = factor.linearize(&vars);
         assert_eq!(lf.precision, 100.0);
     }
@@ -224,7 +230,7 @@ mod tests {
     #[test]
     fn jacobian_signs_correct() {
         let vars = make_vars(0.0, 0.2);
-        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5);
+        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5, -0.3, 10.0, 1.0, 100.0);
         let lf = factor.linearize(&vars);
         assert!(lf.jacobian[0] < 0.0, "d(velocity)/d(s_k) should be negative");
         assert!(lf.jacobian[1] > 0.0, "d(velocity)/d(s_{{k+1}}) should be positive");
@@ -234,7 +240,7 @@ mod tests {
     fn active_when_going_backwards() {
         // velocity = (0.95 - 1.0) / 0.1 = -0.5 m/s, below v_min=-0.3
         let vars = make_vars(1.0, 0.95);
-        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5);
+        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5, -0.3, 10.0, 1.0, 100.0);
         let lf = factor.linearize(&vars);
         assert!(lf.precision > 0.0, "should activate when going backwards past v_min");
     }
@@ -246,7 +252,7 @@ mod tests {
         // g_lower = -0.1 is within margin(1.0) so barrier activates slightly
         // but it should be low precision since we're still within bounds
         let vars = make_vars(1.0, 0.98);
-        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5);
+        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5, -0.3, 10.0, 1.0, 100.0);
         let lf = factor.linearize(&vars);
         // g_lower = v_min - velocity = -0.3 - (-0.2) = -0.1
         // This IS in the barrier zone but not violated — precision should be moderate
@@ -258,7 +264,7 @@ mod tests {
         // 4 variables, K=4, F=8: dynamics factors want v_nom=5.0,
         // velocity bound factors cap at v_max=2.5.
         let dt = 0.1;
-        let mut graph: FactorGraph<4, 8> = FactorGraph::new(0.0, 10.0);
+        let mut graph: FactorGraph<4, 8> = FactorGraph::new(0.0, 10.0, 0.5);
 
         // Add dynamics factors wanting high velocity
         for i in 0..3 {
@@ -268,7 +274,7 @@ mod tests {
 
         // Add velocity bound factors
         for i in 0..3 {
-            let vb_f = VelocityBoundFactor::new([i, i + 1], dt, 2.5);
+            let vb_f = VelocityBoundFactor::new([i, i + 1], dt, 2.5, -0.3, 10.0, 1.0, 100.0);
             let _ = graph.add_factor(FactorKind::VelocityBound(vb_f));
         }
 

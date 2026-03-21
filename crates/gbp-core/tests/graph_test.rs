@@ -8,7 +8,7 @@ const F: usize = 16;
 
 #[test]
 fn factor_graph_add_and_count() {
-    let mut g: FactorGraph<K, F> = FactorGraph::new(0.0, 1.0);
+    let mut g: FactorGraph<K, F> = FactorGraph::new(0.0, 1.0, 0.5);
     assert_eq!(g.factor_count(), 0);
     let idx = g.add_factor(FactorKind::Dynamics(DynamicsFactor::new([0,1], 0.1, 0.1, 1.0))).unwrap();
     assert_eq!(g.factor_count(), 1);
@@ -17,7 +17,7 @@ fn factor_graph_add_and_count() {
 
 #[test]
 fn factor_graph_swap_remove_patches_index() {
-    let mut g: FactorGraph<K, F> = FactorGraph::new(0.0, 1.0);
+    let mut g: FactorGraph<K, F> = FactorGraph::new(0.0, 1.0, 0.5);
     let _i0 = g.add_factor(FactorKind::Dynamics(DynamicsFactor::new([0,1], 0.1, 0.1, 1.0))).unwrap();
     let _i1 = g.add_factor(FactorKind::Dynamics(DynamicsFactor::new([1,2], 0.1, 0.1, 1.0))).unwrap();
     let _i2 = g.add_factor(FactorKind::Dynamics(DynamicsFactor::new([2,3], 0.1, 0.1, 1.0))).unwrap();
@@ -28,7 +28,7 @@ fn factor_graph_swap_remove_patches_index() {
 
 #[test]
 fn iterate_single_dynamics_converges() {
-    let mut g: FactorGraph<2, 4> = FactorGraph::new(0.0, 100.0);
+    let mut g: FactorGraph<2, 4> = FactorGraph::new(0.0, 100.0, 0.5);
     g.variables[0] = VariableNode::new(0.0, 100.0);
     g.variables[0].prior_eta = 0.0 / 100.0;
     g.variables[0].prior_lambda = 1000.0;

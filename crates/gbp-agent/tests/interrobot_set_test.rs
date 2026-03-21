@@ -3,7 +3,7 @@ use gbp_core::{FactorGraph, factor_node::FactorKind, dynamics_factor::DynamicsFa
 
 type G = FactorGraph<4, 16>;
 
-fn make_graph() -> G { FactorGraph::new(0.0, 1.0) }
+fn make_graph() -> G { FactorGraph::new(0.0, 1.0, 0.5) }
 
 #[test]
 fn insert_and_lookup() {

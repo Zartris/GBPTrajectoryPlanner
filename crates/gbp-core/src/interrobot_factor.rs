@@ -24,6 +24,7 @@ pub struct InterRobotFactor {
     var_idx_a:   usize,
     d_safe:      f32,
     sigma_r:     f32,
+    pub decay_alpha: f32,
     active:      bool,
     /// Scalar Jacobians (set by agent each step)
     pub jacobian_a: f32,
@@ -36,9 +37,9 @@ pub struct InterRobotFactor {
 }
 
 impl InterRobotFactor {
-    pub fn new(var_idx_a: usize, d_safe: f32, sigma_r: f32) -> Self {
+    pub fn new(var_idx_a: usize, d_safe: f32, sigma_r: f32, decay_alpha: f32) -> Self {
         Self {
-            var_idx_a, d_safe, sigma_r,
+            var_idx_a, d_safe, sigma_r, decay_alpha,
             active: true,
             jacobian_a: 0.0, jacobian_b: 0.0,
             ext_eta_b: 0.0, ext_lambda_b: 1.0,
@@ -65,7 +66,7 @@ impl Factor for InterRobotFactor {
         //
         // alpha controls the decay rate. Higher alpha = faster decay = less influence at distance.
         // With alpha=3.0 and d_safe=1.3: at 2*d_safe (2.6m) precision is ~2% of full.
-        const DECAY_ALPHA: f32 = 3.0;
+        let decay_alpha = self.decay_alpha;
 
         let residual = self.d_safe - self.dist;
         let sigma_r = f32::max(self.sigma_r, 1e-6);
@@ -74,7 +75,7 @@ impl Factor for InterRobotFactor {
         let prec = if self.dist <= self.d_safe {
             full_prec
         } else {
-            let decay = libm::expf(-DECAY_ALPHA * (self.dist - self.d_safe));
+            let decay = libm::expf(-decay_alpha * (self.dist - self.d_safe));
             full_prec * decay
         };
 
