@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use gbp_map::map::{Map, EdgeId};
 use gbp_map::MAX_HORIZON;
 use crate::state::{MapRes, RobotState, RobotStates, WsInbox};
+use crate::ui::SimPaused;
 use tracing::warn;
 
 pub struct RobotRenderPlugin;
@@ -163,12 +164,14 @@ fn spawn_new_robot_meshes(
     }
 }
 
-/// Drain WsInbox and update RobotStates each frame.
+/// Drain WsInbox and update RobotStates each frame. Skipped when paused.
 fn drain_ws_inbox(
     inbox: Res<WsInbox>,
     mut states: ResMut<RobotStates>,
     mut backend: ResMut<crate::ui::BackendStats>,
+    paused: Res<SimPaused>,
 ) {
+    if paused.0 { return; }
     let mut q = inbox.0.lock().unwrap_or_else(|e| e.into_inner());
     while let Some(msg) = q.pop_front() {
         backend.record_message();
