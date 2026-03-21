@@ -54,6 +54,9 @@ fn main() {
         )
         .add_plugins(EguiPlugin::default())
         .add_plugins(bevy_stl::StlPlugin)
+        // Most entities are static (environment STLs, node spheres); force-enable
+        // transform propagation skipping for unchanged entities.
+        .insert_resource(bevy::transform::StaticTransformOptimizations::enabled())
         .insert_resource(MapRes(map))
         .insert_resource(RobotStates::default())
         .insert_resource(WsInbox(inbox))

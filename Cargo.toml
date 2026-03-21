@@ -32,3 +32,12 @@ bevy_egui          = { version = "0.39" }
 bevy_stl           = { version = "0.18" }
 tokio-tungstenite  = { version = "0.24", features = ["native-tls"] }
 futures-util       = { version = "0.3" }
+
+# Bevy is unusably slow in pure debug mode. opt-level=1 for dev gives ~3-5x speedup.
+[profile.dev]
+opt-level = 1
+
+# Full optimization for release builds.
+[profile.release]
+opt-level = 3
+lto = "thin"
