@@ -171,7 +171,7 @@ mod tests {
     fn partial_config_overrides_only_specified() {
         let config = parse_config("[gbp]\nmsg_damping = 0.8\n");
         assert!((config.msg_damping - 0.8).abs() < 1e-6);
-        assert_eq!(config.internal_iters, 3); // default
+        assert_eq!(config.internal_iters, 10); // default
     }
 
     #[test]

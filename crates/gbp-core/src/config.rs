@@ -44,8 +44,8 @@ impl Default for GbpConfig {
     fn default() -> Self {
         Self {
             msg_damping: 0.5,
-            internal_iters: 3,
-            external_iters: 5,
+            internal_iters: 10,
+            external_iters: 10,
             sigma_dynamics: 0.5,
             gbp_timestep: 0.1,
             d_safe: 1.3,
@@ -75,8 +75,8 @@ mod tests {
     fn default_matches_hardcoded_values() {
         let c = GbpConfig::default();
         assert!((c.msg_damping - 0.5).abs() < 1e-6);
-        assert_eq!(c.internal_iters, 3);
-        assert_eq!(c.external_iters, 5);
+        assert_eq!(c.internal_iters, 10);
+        assert_eq!(c.external_iters, 10);
         assert!((c.d_safe - 1.3).abs() < 1e-6);
         assert!((c.sigma_interrobot - 0.12).abs() < 1e-6);
         assert!((c.v_min - (-0.3)).abs() < 1e-6);

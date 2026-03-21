@@ -14,16 +14,23 @@
 #                    0.5 = average old and new messages (recommended for loopy graphs).
 #                    Lower values improve stability but slow convergence.
 #
-# internal_iters   — Number of internal iterations per external round.
+# internal_iters   — Number of internal iterations per external round (M_I).
 #                    Internal = dynamics + velocity bound factors only (single-robot).
 #                    More internal iters let the robot's own trajectory converge
 #                    before incorporating inter-robot messages.
+#                    WARNING: M_I <= 3 is dangerous — IR factors overwhelm dynamics,
+#                    causing sporadic infeasible motion (MAGICS thesis §6.2.1).
 #
-# external_iters   — Number of external iteration rounds.
-#                    External = inter-robot factors included.
+# external_iters   — Number of external iteration rounds (M_E).
+#                    External = all factors (dynamics + IR) participate.
 #                    Total message passes ≈ (internal+1) × external.
 #                    More external iters improve multi-robot coordination quality
 #                    at the cost of compute time per tick.
+#
+#                    Recommended: M_I >= 10, M_E >= 10, with M_I >= M_E.
+#                    Beyond 10 each, improvements are marginal (MAGICS thesis §5.4.1).
+#                    The original gbpplanner paper used M_I=50, M_E=10 which is
+#                    unnecessarily high (thesis §6.2.1).
 #
 # timestep         — Seconds between GBP planning horizon variables (s).
 #                    With K=12 variables and timestep=0.1, the planner looks 1.2s ahead.
@@ -40,8 +47,8 @@
 
 [gbp]
 msg_damping = 0.5
-internal_iters = 3
-external_iters = 5
+internal_iters = 10
+external_iters = 10
 timestep = 0.1
 init_variance = 100.0
 anchor_precision = 1000.0
