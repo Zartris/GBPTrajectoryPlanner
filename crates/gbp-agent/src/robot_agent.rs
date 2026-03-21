@@ -109,6 +109,14 @@ impl<C: CommsInterface> RobotAgent<C> {
         &mut self.comms
     }
 
+    /// Whether the robot has reached the end of its trajectory.
+    fn at_goal(&self) -> bool {
+        match &self.trajectory {
+            Some(t) => self.position_s >= t.total_length() - 0.01,
+            None => false,
+        }
+    }
+
     /// Number of currently active inter-robot factors.
     pub fn interrobot_factor_count(&self) -> usize {
         self.ir_set.count()
@@ -299,6 +307,17 @@ impl<C: CommsInterface> RobotAgent<C> {
 
     fn update_dynamics_v_nom(&mut self, map: &Map) {
         let traj = match &self.trajectory { Some(t) => t, None => return };
+
+        // At goal: target velocity = 0. Robot stays put.
+        if self.at_goal() {
+            for &dyn_idx in self.dyn_indices.iter() {
+                if let Some(FactorKind::Dynamics(df)) = self.graph.get_factor_kind_mut(dyn_idx) {
+                    df.set_v_nom(0.0);
+                }
+            }
+            return;
+        }
+
         let edge = map.edges.iter().find(|e| e.id == self.current_edge);
         let (nominal, decel) = edge.map(|e| (e.speed.nominal, e.speed.decel_limit))
             .unwrap_or((1.0, 1.0));
@@ -421,6 +440,7 @@ impl<C: CommsInterface> RobotAgent<C> {
         broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>,
         map: &Map,
     ) {
+        let am_at_goal = self.at_goal();
         for bcast in broadcasts.iter() {
             if bcast.robot_id == self.robot_id { continue; }
 
@@ -511,8 +531,12 @@ impl<C: CommsInterface> RobotAgent<C> {
                     let mut jac_a = dot_a / dist_3d;
                     let jac_b = -dot_b / dist_3d;
 
-                    // Asymmetric dampening: front robot gets gentler push
-                    if jac_a > 0.0 {
+                    // At goal: zero our Jacobian so IR only affects the other robot.
+                    // The goal robot has nowhere to go — it must stay put.
+                    if am_at_goal {
+                        jac_a = 0.0;
+                    } else if jac_a > 0.0 {
+                        // Asymmetric dampening: front robot gets gentler push
                         jac_a *= self.config.front_damping;
                     }
 
