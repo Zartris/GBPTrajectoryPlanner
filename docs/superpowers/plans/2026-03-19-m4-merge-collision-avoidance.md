@@ -1,14 +1,17 @@
-# M4: Merge Collision Avoidance — Implementation Plan
+# M4: Merge Collision Avoidance — Implementation Plan (COMPLETED)
 
-> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status:** COMPLETED. Implementation diverged from original plan — see notes below.
 
-**Goal:** Two robots on different incoming edges negotiate before a merge node. Inter-robot factors spawn based on planned-edge-set intersection (not just current edge). One robot yields, both pass the merge without collision. Dashed planned routes per robot, shared edges highlighted, factor lines visible.
+**Goal:** Two robots on different incoming edges negotiate before a merge node. Inter-robot factors spawn based on planned-edge-set intersection (not just current edge). One robot yields, both pass the merge without collision.
 
-**Architecture:** `update_interrobot_factors()` is extended to compare the full planned edge sequence of each robot pair — a factor is spawned for every timestep index K where planned edges overlap. `planned_edges_snapshot_from(current_edge)` in `AgentRunner` returns only the remaining edges (at-or-after the current edge) so other robots can check intersection without stale completed edges. The visualiser adds per-robot planned-route overlays and highlights shared edges in yellow when a factor is active on that edge.
+**What actually happened:** The original plan proposed `planned_edges_snapshot_from()` for edge trimming and a simple factor lifecycle test. During implementation, deeper issues were discovered and fixed:
+- The Jacobian was using arc-length subtraction (broken for different trajectories) → replaced with 3D Jacobian
+- GBP was predicting 10+ m/s velocities → added VelocityBoundFactor (BIPM-inspired)
+- External factor messages were over-accumulated → added iterate_split() (internal/external separation)
+- Belief chain was flipping backwards → added lower velocity bound (v_min=-0.3)
+- IR factors never despawned per-variable → added remove_single()
 
-**Tech Stack:** No new external dependencies beyond M3.
-
-**Prerequisite:** M3 plan complete and passing.
+See `docs/handoff/2026-03-21-m4-handoff.md` for the complete record of all changes and the updated `docs/superpowers/specs/2026-03-19-milestones-design.md` for the milestone status.
 
 ---
 
