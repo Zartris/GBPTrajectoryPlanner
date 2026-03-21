@@ -194,34 +194,31 @@ fn spawn_environment_stl(
         ..default()
     };
 
-    // Physical track — grey, semi-transparent
+    // Physical track — grey (opaque for performance: 56K tris)
     commands.spawn((
         Mesh3d(asset_server.load(PHYSICAL_TRACK_STL)),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgba(0.45, 0.45, 0.45, 0.8),
-            alpha_mode: AlphaMode::Blend,
+            base_color: Color::srgb(0.45, 0.45, 0.45),
             ..default()
         })),
         stl_transform,
     ));
 
-    // Magnetic mainlines — dark blue, semi-transparent
+    // Magnetic mainlines — dark blue (opaque for performance: 86K tris)
     commands.spawn((
         Mesh3d(asset_server.load(MAGNETIC_MAINLINES_STL)),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgba(0.1, 0.1, 0.7, 0.6),
-            alpha_mode: AlphaMode::Blend,
+            base_color: Color::srgb(0.1, 0.1, 0.7),
             ..default()
         })),
         stl_transform,
     ));
 
-    // Magnetic markers — yellow, semi-transparent
+    // Magnetic markers — yellow
     commands.spawn((
         Mesh3d(asset_server.load(MAGNETIC_MARKERS_STL)),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgba(0.8, 0.8, 0.0, 0.6),
-            alpha_mode: AlphaMode::Blend,
+            base_color: Color::srgb(0.8, 0.8, 0.0),
             ..default()
         })),
         stl_transform,
