@@ -17,9 +17,9 @@ const NUM_VEL_BOUND_FACTORS: usize = MAX_HORIZON - 1;
 const MAX_FACTORS: usize = NUM_DYN_FACTORS + NUM_VEL_BOUND_FACTORS + MAX_IR_FACTORS;
 
 /// Internal iterations (dynamics + velocity bound) per external iteration (inter-robot).
-const GBP_INTERNAL_ITERS: usize = 5;
-/// External iterations (inter-robot factors). Total GBP iterations = INTERNAL * EXTERNAL.
-const GBP_EXTERNAL_ITERS: usize = 3;
+const GBP_INTERNAL_ITERS: usize = 3;
+/// External iterations (inter-robot factors). Total iterations = (INTERNAL+1) * EXTERNAL.
+const GBP_EXTERNAL_ITERS: usize = 5;
 const DT: f32 = 0.1; // seconds per GBP timestep
 const D_SAFE: f32 = 1.3; // minimum center-to-center clearance (m) — chassis 1.15m + 0.15m margin
 const SIGMA_R: f32 = 0.15; // inter-robot factor noise (precision ≈ 44 vs dynamics precision = 4)

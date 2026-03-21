@@ -116,10 +116,10 @@ impl Factor for VelocityBoundFactor {
         } else if g < -1e-4 {
             // Barrier zone: precision rises as g -> 0
             let raw = 1.0 / (self.kappa * g * g);
-            f32::min(raw, 1000.0)
+            f32::min(raw, 100.0)
         } else {
             // At or over limit -- maximum corrective force
-            1000.0
+            100.0
         };
 
         LinearizedFactor {
@@ -185,7 +185,7 @@ mod tests {
         let vars = make_vars(0.0, 0.3);
         let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5);
         let lf = factor.linearize(&vars);
-        assert_eq!(lf.precision, 1000.0);
+        assert_eq!(lf.precision, 100.0);
     }
 
     #[test]
