@@ -68,7 +68,11 @@ impl Factor for InterRobotFactor {
         // With alpha=3.0 and d_safe=1.3: at 2*d_safe (2.6m) precision is ~2% of full.
         let decay_alpha = self.decay_alpha;
 
-        let residual = self.d_safe - self.dist;
+        // Residual: dist - d_safe (positive when safe, negative when too close).
+        // Sign convention matches pairwise factors where r = h(x) - z, so the
+        // factor_graph formula jx - r = jx - (dist - d_safe) = jx - dist + d_safe
+        // pushes variables apart when dist < d_safe.
+        let residual = self.dist - self.d_safe;
         let sigma_r = f32::max(self.sigma_r, 1e-6);
         let full_prec = 1.0 / (sigma_r * sigma_r);
 
