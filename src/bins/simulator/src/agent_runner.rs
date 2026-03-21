@@ -3,6 +3,7 @@
 //! Which edge the robot is on is derived from the trajectory, not managed by physics.
 
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
 use gbp_agent::RobotAgent;
@@ -175,10 +176,12 @@ pub async fn agent_task(
     runner: Arc<Mutex<AgentRunner>>,
     tx: broadcast::Sender<RobotStateMsg>,
     robot_id: u32,
+    paused: Arc<AtomicBool>,
 ) {
     let mut ticker = interval(Duration::from_millis(20)); // 50 Hz (matches physics)
     loop {
         ticker.tick().await;
+        if paused.load(Ordering::Relaxed) { continue; }
 
         let global_s = physics.lock().unwrap_or_else(|e| e.into_inner()).position_s;
 

@@ -13,6 +13,10 @@ pub const WS_INBOX_CAP: usize = 64;
 #[derive(Resource, Default)]
 pub struct WsInbox(pub Arc<Mutex<VecDeque<RobotStateMsg>>>);
 
+/// Bevy resource: queue of outgoing commands to send to simulator via WebSocket.
+#[derive(Resource, Default)]
+pub struct WsOutbox(pub Arc<Mutex<VecDeque<String>>>);
+
 /// Per-robot state for visualiser rendering.
 #[derive(Clone, Debug)]
 pub struct RobotState {

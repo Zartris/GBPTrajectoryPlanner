@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
-use state::{MapRes, RobotStates, WsInbox};
+use state::{MapRes, RobotStates, WsInbox, WsOutbox};
 use map_scene::MapScenePlugin;
 use robot_render::RobotRenderPlugin;
 use ui::UiPlugin;
@@ -33,7 +33,8 @@ fn main() {
     let ws_url = std::env::var("WS_URL")
         .unwrap_or_else(|_| "ws://localhost:3000/ws".to_string());
     let inbox: Arc<Mutex<VecDeque<_>>> = Arc::new(Mutex::new(VecDeque::new()));
-    let ws_shutdown = ws_client::spawn_ws_client(ws_url, Arc::clone(&inbox));
+    let outbox: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let ws_shutdown = ws_client::spawn_ws_client(ws_url, Arc::clone(&inbox), Arc::clone(&outbox));
 
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.1))) // dark blue background
@@ -60,6 +61,7 @@ fn main() {
         .insert_resource(MapRes(map))
         .insert_resource(RobotStates::default())
         .insert_resource(WsInbox(inbox))
+        .insert_resource(WsOutbox(outbox))
         .add_plugins(MapScenePlugin)
         .add_plugins(RobotRenderPlugin)
         .add_plugins(UiPlugin)

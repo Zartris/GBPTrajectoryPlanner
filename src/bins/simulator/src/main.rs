@@ -5,6 +5,7 @@ pub mod sim_comms;
 pub mod agent_runner;
 
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{broadcast, mpsc};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -101,6 +102,9 @@ async fn main() {
     let (cmd_tx, mut cmd_rx): (mpsc::Sender<String>, _) = mpsc::channel(8);
 
     let (bcast_tx, _) = broadcast::channel::<RobotBroadcast>(64);
+
+    // Shared pause flag — checked by physics and agent tasks
+    let sim_paused = Arc::new(AtomicBool::new(false));
 
     // Relay: RobotStateMsg -> JSON
     let tx_json_relay = tx_json.clone();
@@ -248,8 +252,27 @@ async fn main() {
         let map_cmd = Arc::clone(&map_arc);
         let runner_cmd = Arc::clone(&runner0);
         let phys_cmd = Arc::clone(&physics0);
+        let pause_cmd = Arc::clone(&sim_paused);
         tokio::spawn(async move {
             while let Some(json) = cmd_rx.recv().await {
+                // Check for pause/resume commands
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
+                    if let Some(cmd) = v.get("command").and_then(|c| c.as_str()) {
+                        match cmd {
+                            "pause" => {
+                                pause_cmd.store(true, Ordering::Relaxed);
+                                info!("simulation PAUSED");
+                                continue;
+                            }
+                            "resume" => {
+                                pause_cmd.store(false, Ordering::Relaxed);
+                                info!("simulation RESUMED");
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 if let Ok(cmd) = serde_json::from_str::<TrajectoryCommand>(&json) {
                     let global_s = phys_cmd.lock().unwrap_or_else(|e| e.into_inner()).position_s;
                     let (cur_edge, _) = runner_cmd.lock().unwrap_or_else(|e| e.into_inner()).edge_at_s(global_s);
@@ -279,20 +302,21 @@ async fn main() {
         let p0_mon = Arc::clone(&physics0);
         let p1_mon = Arc::clone(&physics1);
 
-        tokio::spawn(physics::physics_task(Arc::clone(&physics0)));
-        tokio::spawn(agent_task(Arc::clone(&physics0), runner0, tx_state.clone(), 0));
+        tokio::spawn(physics::physics_task(Arc::clone(&physics0), Arc::clone(&sim_paused)));
+        tokio::spawn(agent_task(Arc::clone(&physics0), runner0, tx_state.clone(), 0, Arc::clone(&sim_paused)));
 
         let physics1_clone = Arc::clone(&physics1);
         let runner1_arc = runner1;
         let tx1 = tx_state.clone();
+        let paused1 = Arc::clone(&sim_paused);
         tokio::spawn(async move {
             if delayed_start {
                 info!("endcollision: robot 1 spawns in 2 seconds...");
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                 info!("endcollision: robot 1 spawning now");
             }
-            tokio::spawn(physics::physics_task(Arc::clone(&physics1_clone)));
-            agent_task(physics1_clone, runner1_arc, tx1, 1).await;
+            tokio::spawn(physics::physics_task(Arc::clone(&physics1_clone), Arc::clone(&paused1)));
+            agent_task(physics1_clone, runner1_arc, tx1, 1, paused1).await;
         });
 
         // 2-robot collision monitor
@@ -392,14 +416,27 @@ async fn main() {
             let runner_arc = Arc::new(Mutex::new(runner));
             let physics = Arc::new(Mutex::new(PhysicsState::new(total_length)));
 
-            tokio::spawn(physics::physics_task(Arc::clone(&physics)));
+            tokio::spawn(physics::physics_task(Arc::clone(&physics), Arc::clone(&sim_paused)));
             tokio::spawn(agent_task(
-                Arc::clone(&physics), runner_arc, tx_state.clone(), i as u32
+                Arc::clone(&physics), runner_arc, tx_state.clone(), i as u32, Arc::clone(&sim_paused)
             ));
         }
 
-        // Drop cmd_rx so the channel closes (no command handler in fleet mode yet)
-        drop(cmd_rx);
+        // Fleet mode command handler (pause/resume only)
+        let pause_fleet = Arc::clone(&sim_paused);
+        tokio::spawn(async move {
+            while let Some(json) = cmd_rx.recv().await {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
+                    if let Some(cmd) = v.get("command").and_then(|c| c.as_str()) {
+                        match cmd {
+                            "pause" => { pause_fleet.store(true, Ordering::Relaxed); info!("simulation PAUSED"); }
+                            "resume" => { pause_fleet.store(false, Ordering::Relaxed); info!("simulation RESUMED"); }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        });
     }
 
     let router = ws_server::build_router(tx_json, cmd_tx);

@@ -1,5 +1,6 @@
 // src/bins/simulator/src/physics.rs
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::{interval, Duration};
 
 /// Shared mutable physics state for one robot.
@@ -31,12 +32,13 @@ impl PhysicsState {
     }
 }
 
-/// Runs at 50 Hz, integrating position from velocity.
-pub async fn physics_task(state: Arc<Mutex<PhysicsState>>) {
+/// Runs at 50 Hz, integrating position from velocity. Skips when paused.
+pub async fn physics_task(state: Arc<Mutex<PhysicsState>>, paused: Arc<AtomicBool>) {
     const DT: f32 = 1.0 / 50.0;
     let mut ticker = interval(Duration::from_millis(20)); // 50 Hz
     loop {
         ticker.tick().await;
+        if paused.load(Ordering::Relaxed) { continue; }
         state.lock().unwrap_or_else(|e| e.into_inner()).step(DT);
     }
 }
