@@ -570,13 +570,26 @@ impl<C: CommsInterface> RobotAgent<C> {
     }
 
     fn make_broadcast(&self, velocity: f32) -> RobotBroadcast {
-        // Broadcast MARGINAL beliefs (standard in distributed GBP).
-        // Circular evidence exists but is accepted — message damping stabilises it.
+        // Broadcast CAVITY beliefs: marginal minus IR factor contributions.
+        // This prevents circular evidence — robot A's IR push is NOT baked
+        // into the beliefs that robot B reads back, avoiding positive feedback.
         let mut means: Vec<f32, MAX_HORIZON> = Vec::new();
         let mut vars: Vec<f32, MAX_HORIZON> = Vec::new();
-        for v in &self.graph.variables {
-            let _ = means.push(v.mean());
-            let _ = vars.push(v.variance().min(1e6));
+        for (k, v) in self.graph.variables.iter().enumerate() {
+            // Subtract all IR factor messages connected to variable k
+            let mut cav_eta = v.eta;
+            let mut cav_lambda = v.lambda;
+            for &(_rid, var_k, factor_idx) in self.ir_set.iter() {
+                if var_k == k {
+                    if let Some(fnode) = self.graph.factor_node(factor_idx) {
+                        cav_eta -= fnode.msg_eta[0];
+                        cav_lambda -= fnode.msg_lambda[0];
+                    }
+                }
+            }
+            let cav_lambda = cav_lambda.max(1e-10);
+            let _ = means.push(cav_eta / cav_lambda);
+            let _ = vars.push((1.0 / cav_lambda).min(1e6));
         }
         RobotBroadcast {
             robot_id: self.robot_id,
