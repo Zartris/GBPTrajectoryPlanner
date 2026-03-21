@@ -1,0 +1,6 @@
+# Fleet scenario: 4 robots with auto-assigned distributed starts and random goals.
+[scenario]
+name        = "fleet"
+map         = "maps/test_loop_map.yaml"
+auto_assign = true
+num_robots  = 4

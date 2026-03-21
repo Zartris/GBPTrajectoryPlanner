@@ -1,0 +1,12 @@
+# Merge scenario: two robots from different entry points converging on the same goal.
+[scenario]
+name = "merge"
+map  = "maps/test_loop_map.yaml"
+
+[[robots]]
+start = "P004"
+goal  = "P039"
+
+[[robots]]
+start = "P033"
+goal  = "P039"
