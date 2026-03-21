@@ -199,10 +199,14 @@ fn update_robot_transforms(
             let tan = robot_tangent(&map.0, state.current_edge, state.position_s);
             // Lift chassis so bottom sits on track (half height above track surface)
             transform.translation = Vec3::from(pos) + Vec3::new(0.0, CHASSIS_HEIGHT / 2.0, 0.0);
-            // Align chassis length (Z axis) along travel direction
+            // Compose: first rotate STL from Z-up to Y-up, then align along travel direction.
+            let stl_base = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
             let dir = Vec3::from(tan);
             if dir.length_squared() > 0.01 {
-                transform.rotation = Quat::from_rotation_arc(Vec3::NEG_Z, dir);
+                let heading = Quat::from_rotation_arc(Vec3::NEG_Z, dir);
+                transform.rotation = heading * stl_base;
+            } else {
+                transform.rotation = stl_base;
             }
         }
     }
