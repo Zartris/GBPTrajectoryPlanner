@@ -58,7 +58,7 @@ impl Factor for InterRobotFactor {
     fn variable_indices(&self) -> &[usize] { core::slice::from_ref(&self.var_idx_a) }
     fn is_active(&self) -> bool { self.active }
 
-    fn linearize(&self, _variables: &[VariableNode]) -> LinearizedFactor {
+    fn linearize(&self, variables: &[VariableNode]) -> LinearizedFactor {
         // Exponential decay precision — smooth everywhere, no discontinuities.
         //
         //   dist <= d_safe  → full precision (collision zone)
@@ -79,12 +79,25 @@ impl Factor for InterRobotFactor {
             full_prec * decay
         };
 
+        // Linearization point: variable A from graph, variable B from external belief
+        let x_a = variables[self.var_idx_a].mean();
+        let x_b = if self.ext_lambda_b > 1e-10 {
+            self.ext_eta_b / self.ext_lambda_b
+        } else {
+            0.0
+        };
+
         // Joint information matrix (2x2, pairwise between A and B)
         let xi_aa = prec * self.jacobian_a * self.jacobian_a;
         let xi_ab = prec * self.jacobian_a * self.jacobian_b;
         let xi_bb = prec * self.jacobian_b * self.jacobian_b;
-        let zeta_a = prec * residual * self.jacobian_a;
-        let zeta_b = prec * residual * self.jacobian_b;
+
+        // Information vector: η = J^T * Λ * (J*x - r)
+        // This includes the linearization point J*x, matching the pairwise formula
+        // in factor_graph.rs. Without this, the factor's push has wrong magnitude.
+        let jx = self.jacobian_a * x_a + self.jacobian_b * x_b;
+        let zeta_a = prec * self.jacobian_a * (jx - residual);
+        let zeta_b = prec * self.jacobian_b * (jx - residual);
 
         // Marginalize out B using Schur complement with B's external cavity belief
         let lambda_b_eff = xi_bb + self.ext_lambda_b;
