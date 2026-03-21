@@ -136,19 +136,14 @@ const CHASSIS_LENGTH: f32 = 1.15; // front to rear (m)
 const CHASSIS_WIDTH: f32 = 0.90;  // left to right (m)
 const CHASSIS_HEIGHT: f32 = 0.126; // top to bottom (m)
 
-const CHASSIS_STL: &str = "models/chassis.stl";
-
-/// STL models are authored in millimeters; map coordinates are in meters.
-const STL_SCALE: f32 = 0.001;
 
 fn spawn_new_robot_meshes(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     states: Res<RobotStates>,
     query: Query<&RobotArrow>,
 ) {
-    // Check which robot IDs already have entities
     let existing: std::vec::Vec<u32> = query.iter().map(|a| a.robot_id).collect();
 
     for &id in states.0.keys() {
@@ -156,18 +151,13 @@ fn spawn_new_robot_meshes(
         let (r, g, b) = ROBOT_COLORS.get(id as usize % ROBOT_COLORS.len())
             .copied().unwrap_or((0.5, 0.5, 0.5));
         commands.spawn((
-            Mesh3d(asset_server.load(CHASSIS_STL)),
+            Mesh3d(meshes.add(Cuboid::new(CHASSIS_WIDTH, CHASSIS_HEIGHT, CHASSIS_LENGTH))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgb(r, g, b),
                 emissive: bevy::color::LinearRgba::new(r * 0.3, g * 0.3, b * 0.3, 1.0),
                 ..default()
             })),
-            // Z-up STL → Y-up Bevy: scale mm→m + rotate -90° around X
-            Transform {
-                scale: Vec3::splat(STL_SCALE),
-                rotation: Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
-                ..default()
-            },
+            Transform::IDENTITY,
             RobotArrow { robot_id: id },
         ));
     }
@@ -199,14 +189,10 @@ fn update_robot_transforms(
             let tan = robot_tangent(&map.0, state.current_edge, state.position_s);
             // Lift chassis so bottom sits on track (half height above track surface)
             transform.translation = Vec3::from(pos) + Vec3::new(0.0, CHASSIS_HEIGHT / 2.0, 0.0);
-            // Compose: first rotate STL from Z-up to Y-up, then align along travel direction.
-            let stl_base = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+            // Align chassis length (Z axis) along travel direction
             let dir = Vec3::from(tan);
             if dir.length_squared() > 0.01 {
-                let heading = Quat::from_rotation_arc(Vec3::NEG_Z, dir);
-                transform.rotation = heading * stl_base;
-            } else {
-                transform.rotation = stl_base;
+                transform.rotation = Quat::from_rotation_arc(Vec3::NEG_Z, dir);
             }
         }
     }
