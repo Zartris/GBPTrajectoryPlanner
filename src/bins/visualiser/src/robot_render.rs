@@ -138,6 +138,9 @@ const CHASSIS_HEIGHT: f32 = 0.126; // top to bottom (m)
 
 const CHASSIS_STL: &str = "models/chassis.stl";
 
+/// STL models are authored in millimeters; map coordinates are in meters.
+const STL_SCALE: f32 = 0.001;
+
 fn spawn_new_robot_meshes(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -159,7 +162,7 @@ fn spawn_new_robot_meshes(
                 emissive: bevy::color::LinearRgba::new(r * 0.3, g * 0.3, b * 0.3, 1.0),
                 ..default()
             })),
-            Transform::IDENTITY,
+            Transform::from_scale(Vec3::splat(STL_SCALE)),
             RobotArrow { robot_id: id },
         ));
     }

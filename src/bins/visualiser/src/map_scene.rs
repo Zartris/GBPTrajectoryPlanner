@@ -14,6 +14,9 @@ const PHYSICAL_TRACK_STL: &str = "models/physical_track.stl";
 const MAGNETIC_MAINLINES_STL: &str = "models/magnetic_mainlines.stl";
 const MAGNETIC_MARKERS_STL: &str = "models/magnetic_markers.stl";
 
+/// STL models are authored in millimeters; map coordinates are in meters.
+const STL_SCALE: f32 = 0.001;
+
 pub struct MapScenePlugin;
 
 impl Plugin for MapScenePlugin {
@@ -183,6 +186,8 @@ fn spawn_environment_stl(
     asset_server: Res<AssetServer>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let stl_transform = Transform::from_scale(Vec3::splat(STL_SCALE));
+
     // Physical track — grey, semi-transparent
     commands.spawn((
         Mesh3d(asset_server.load(PHYSICAL_TRACK_STL)),
@@ -191,7 +196,7 @@ fn spawn_environment_stl(
             alpha_mode: AlphaMode::Blend,
             ..default()
         })),
-        Transform::IDENTITY,
+        stl_transform,
     ));
 
     // Magnetic mainlines — dark blue, semi-transparent
@@ -202,7 +207,7 @@ fn spawn_environment_stl(
             alpha_mode: AlphaMode::Blend,
             ..default()
         })),
-        Transform::IDENTITY,
+        stl_transform,
     ));
 
     // Magnetic markers — yellow, semi-transparent
@@ -213,7 +218,7 @@ fn spawn_environment_stl(
             alpha_mode: AlphaMode::Blend,
             ..default()
         })),
-        Transform::IDENTITY,
+        stl_transform,
     ));
 }
 
