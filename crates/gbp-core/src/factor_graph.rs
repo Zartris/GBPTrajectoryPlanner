@@ -108,7 +108,25 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
             let var_indices = f.kind.as_factor().variable_indices();
 
             if var_indices.len() == 1 {
+                // Unary factor (e.g. InterRobotFactor after Schur complement):
+                // Compute cavity belief (marginal minus this factor's previous message)
+                // so linearize() sees the variable without its own influence.
+                let var_idx = var_indices[0];
+                let cav_eta = self.variables[var_idx].eta - f.msg_eta[0];
+                let cav_lambda = self.variables[var_idx].lambda - f.msg_lambda[0];
+
+                // Temporarily set variable to cavity for linearize()
+                let saved_eta = self.variables[var_idx].eta;
+                let saved_lambda = self.variables[var_idx].lambda;
+                self.variables[var_idx].eta = cav_eta;
+                self.variables[var_idx].lambda = cav_lambda;
+
                 let lf = f.kind.as_factor().linearize(&self.variables);
+
+                // Restore full marginal
+                self.variables[var_idx].eta = saved_eta;
+                self.variables[var_idx].lambda = saved_lambda;
+
                 let new_eta = lf.residual;
                 let new_lambda = lf.precision;
                 f.msg_eta[0]    = self.msg_damping * new_eta    + (1.0 - self.msg_damping) * f.msg_eta[0];
@@ -164,13 +182,20 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
             let var_indices = f.kind.as_factor().variable_indices();
 
             if var_indices.len() == 1 {
-                // Unary factor (e.g. InterRobotFactor):
-                // linearize() returns pre-computed information-form message
-                // (msg_eta, msg_lambda) in the (residual, precision) fields.
+                // Unary factor: compute cavity so linearize() doesn't double-count
+                let var_idx = var_indices[0];
+                let saved_eta = self.variables[var_idx].eta;
+                let saved_lambda = self.variables[var_idx].lambda;
+                self.variables[var_idx].eta -= f.msg_eta[0];
+                self.variables[var_idx].lambda -= f.msg_lambda[0];
+
                 let lf = f.kind.as_factor().linearize(&self.variables);
+
+                self.variables[var_idx].eta = saved_eta;
+                self.variables[var_idx].lambda = saved_lambda;
+
                 let new_eta = lf.residual;
                 let new_lambda = lf.precision;
-                // Apply damping
                 f.msg_eta[0]    = self.msg_damping * new_eta    + (1.0 - self.msg_damping) * f.msg_eta[0];
                 f.msg_lambda[0] = self.msg_damping * new_lambda + (1.0 - self.msg_damping) * f.msg_lambda[0];
 
