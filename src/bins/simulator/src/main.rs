@@ -163,6 +163,9 @@ async fn main() {
     info!("scenario '{}': spawning {} robots", scenario.scenario.name, assignments.len());
 
     // ── Spawn all robots in a single unified loop ──
+    let mut all_runners: std::vec::Vec<Arc<Mutex<AgentRunner>>> = Vec::new();
+    let mut all_physics: std::vec::Vec<Arc<Mutex<PhysicsState>>> = Vec::new();
+
     for (i, &(start, goal)) in assignments.iter().enumerate() {
         let rx = bcast_tx.subscribe();
         let comms = SimComms::new(bcast_tx.clone(), rx);
@@ -181,11 +184,76 @@ async fn main() {
         let runner_arc = Arc::new(Mutex::new(runner));
         let physics = Arc::new(Mutex::new(PhysicsState::new(total_length)));
 
+        all_runners.push(Arc::clone(&runner_arc));
+        all_physics.push(Arc::clone(&physics));
+
         tokio::spawn(physics::physics_task(Arc::clone(&physics), Arc::clone(&sim_paused)));
         tokio::spawn(agent_task(
             Arc::clone(&physics), runner_arc, tx_state.clone(), i as u32, Arc::clone(&sim_paused)
         ));
     }
+
+    // ── N-robot collision monitor (10 Hz, pairwise 3D distance) ──
+    let map_mon = Arc::clone(&map_arc);
+    let d_safe = config.d_safe;
+    tokio::spawn(async move {
+        const CHASSIS_LEN: f32 = 1.15;
+        let n = all_physics.len();
+        let mut collision_count: u32 = 0;
+        let mut log_counter: u32 = 0;
+        let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(100));
+        loop {
+            ticker.tick().await;
+            log_counter += 1;
+            // Collect positions for all robots
+            let mut positions: std::vec::Vec<([f32; 3], f32, f32)> = Vec::with_capacity(n); // (pos_3d, s, v)
+            for i in 0..n {
+                let (s, v) = {
+                    let p = all_physics[i].lock().unwrap_or_else(|e| e.into_inner());
+                    (p.position_s, p.velocity)
+                };
+                let (edge, local) = all_runners[i].lock().unwrap_or_else(|e| e.into_inner()).edge_at_s(s);
+                let pos = map_mon.eval_position(edge, local).unwrap_or([0.0; 3]);
+                positions.push((pos, s, v));
+            }
+            // Pairwise collision check
+            for i in 0..n {
+                for j in (i+1)..n {
+                    let (pi, si, vi) = positions[i];
+                    let (pj, sj, vj) = positions[j];
+                    let dx = pi[0]-pj[0]; let dy = pi[1]-pj[1]; let dz = pi[2]-pj[2];
+                    let dist = (dx*dx + dy*dy + dz*dz).sqrt();
+                    if dist < CHASSIS_LEN && si > 1.5 && sj > 1.5 {
+                        collision_count += 1;
+                        warn!(
+                            "COLLISION R{}↔R{}: dist={:.3}m (< {:.2}m) \
+                             R{}: s={:.2} v={:.2} pos=[{:.2},{:.2},{:.2}] \
+                             R{}: s={:.2} v={:.2} pos=[{:.2},{:.2},{:.2}]",
+                            i, j, dist, CHASSIS_LEN,
+                            i, si, vi, pi[0], pi[1], pi[2],
+                            j, sj, vj, pj[0], pj[1], pj[2],
+                        );
+                    }
+                }
+            }
+            // Summary log every 5s
+            if log_counter % 50 == 0 {
+                let mut min_dist = f32::MAX;
+                let mut min_pair = (0, 0);
+                for i in 0..n {
+                    for j in (i+1)..n {
+                        let (pi, _, _) = positions[i];
+                        let (pj, _, _) = positions[j];
+                        let dx = pi[0]-pj[0]; let dy = pi[1]-pj[1]; let dz = pi[2]-pj[2];
+                        let d = (dx*dx + dy*dy + dz*dz).sqrt();
+                        if d < min_dist { min_dist = d; min_pair = (i, j); }
+                    }
+                }
+                info!("MONITOR: {} robots, min_dist={:.2}m (R{}↔R{}), collisions={}, d_safe={}",
+                    n, min_dist, min_pair.0, min_pair.1, collision_count, d_safe);
+            }
+        }
+    });
 
     // Command handler (pause/resume)
     let pause_cmd = Arc::clone(&sim_paused);
