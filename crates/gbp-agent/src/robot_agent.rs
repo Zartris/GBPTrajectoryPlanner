@@ -1,5 +1,5 @@
 use gbp_comms::{CommsInterface, ObservationUpdate, RobotBroadcast, RobotId};
-use gbp_core::{Factor, FactorGraph, FactorKind, DynamicsFactor, InterRobotFactor};
+use gbp_core::{Factor, FactorGraph, FactorKind, DynamicsFactor, InterRobotFactor, VelocityBoundFactor};
 use gbp_map::{Map, MAX_HORIZON, MAX_NEIGHBOURS};
 use gbp_map::map::EdgeId;
 use heapless::Vec;
@@ -11,10 +11,15 @@ use crate::dynamic_constraints::DynamicConstraints;
 const NUM_DYN_FACTORS: usize = MAX_HORIZON - 1;
 /// Max inter-robot factors = one per variable per neighbour (K * MAX_NEIGHBOURS)
 const MAX_IR_FACTORS: usize = MAX_HORIZON * MAX_NEIGHBOURS;
-/// Max total factors = dynamics + inter-robot
-const MAX_FACTORS: usize = NUM_DYN_FACTORS + MAX_IR_FACTORS;
+/// Number of velocity bound factors = K-1 (one per adjacent timestep pair)
+const NUM_VEL_BOUND_FACTORS: usize = MAX_HORIZON - 1;
+/// Max total factors = dynamics + velocity bound + inter-robot
+const MAX_FACTORS: usize = NUM_DYN_FACTORS + NUM_VEL_BOUND_FACTORS + MAX_IR_FACTORS;
 
-const GBP_ITERATIONS: usize = 15;
+/// Internal iterations (dynamics + velocity bound) per external iteration (inter-robot).
+const GBP_INTERNAL_ITERS: usize = 5;
+/// External iterations (inter-robot factors). Total GBP iterations = INTERNAL * EXTERNAL.
+const GBP_EXTERNAL_ITERS: usize = 3;
 const DT: f32 = 0.1; // seconds per GBP timestep
 const D_SAFE: f32 = 1.3; // minimum center-to-center clearance (m) — chassis 1.15m + 0.15m margin
 const SIGMA_R: f32 = 0.15; // inter-robot factor noise (precision ≈ 44 vs dynamics precision = 4)
@@ -38,6 +43,7 @@ pub struct RobotAgent<C: CommsInterface> {
     graph:     FactorGraph<MAX_HORIZON, MAX_FACTORS>,
     trajectory: Option<Trajectory>,
     dyn_indices: [usize; NUM_DYN_FACTORS],
+    vel_bound_indices: [usize; NUM_VEL_BOUND_FACTORS],
     ir_set: InterRobotFactorSet,
     position_s:   f32,
     current_edge: EdgeId,
@@ -69,6 +75,14 @@ impl<C: CommsInterface> RobotAgent<C> {
             dyn_indices[k] = idx;
         }
 
+        let mut vel_bound_indices = [0usize; NUM_VEL_BOUND_FACTORS];
+        for k in 0..NUM_VEL_BOUND_FACTORS {
+            let idx = graph.add_factor(FactorKind::VelocityBound(
+                VelocityBoundFactor::new([k, k + 1], DT, 2.5)
+            )).expect("BUG: MAX_FACTORS too small for velocity bound factors");
+            vel_bound_indices[k] = idx;
+        }
+
         Self {
             robot_id,
             comms,
@@ -76,6 +90,7 @@ impl<C: CommsInterface> RobotAgent<C> {
             graph,
             trajectory: None,
             dyn_indices,
+            vel_bound_indices,
             ir_set: InterRobotFactorSet::new(),
             position_s: 0.0,
             current_edge: EdgeId(0),
@@ -215,7 +230,7 @@ impl<C: CommsInterface> RobotAgent<C> {
         self.update_interrobot_jacobians(&broadcasts, map);
 
         // 5. Run GBP
-        self.graph.iterate(GBP_ITERATIONS);
+        self.graph.iterate_split(GBP_INTERNAL_ITERS, GBP_EXTERNAL_ITERS);
 
         // 6. Extract commanded velocity from GBP
         let s0 = self.graph.variables[0].mean();
@@ -281,6 +296,13 @@ impl<C: CommsInterface> RobotAgent<C> {
             let v_nom = traj.v_nom_at(s_k_global, nominal, decel);
             if let Some(FactorKind::Dynamics(df)) = self.graph.get_factor_kind_mut(dyn_idx) {
                 df.set_v_nom(v_nom);
+            }
+        }
+
+        let max_speed = edge.map(|e| e.speed.max).unwrap_or(2.5);
+        for &vb_idx in self.vel_bound_indices.iter() {
+            if let Some(FactorKind::VelocityBound(vbf)) = self.graph.get_factor_kind_mut(vb_idx) {
+                vbf.set_v_max(max_speed);
             }
         }
     }
