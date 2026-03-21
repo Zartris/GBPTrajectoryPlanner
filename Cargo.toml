@@ -32,6 +32,7 @@ bevy_egui          = { version = "0.39" }
 bevy_stl           = { version = "0.18" }
 tokio-tungstenite  = { version = "0.24", features = ["native-tls"] }
 futures-util       = { version = "0.3" }
+toml               = { version = "0.8" }
 
 # Keep our own code fast to compile (low opt), but fully optimize all
 # dependencies (especially Bevy's renderer, wgpu, naga, etc.).

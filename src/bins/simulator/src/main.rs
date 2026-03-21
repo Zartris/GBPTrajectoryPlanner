@@ -3,6 +3,7 @@ mod broadcast_task;
 mod ws_server;
 pub mod sim_comms;
 pub mod agent_runner;
+pub mod toml_config;
 
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
