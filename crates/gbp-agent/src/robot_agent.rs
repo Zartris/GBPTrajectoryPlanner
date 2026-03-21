@@ -400,7 +400,9 @@ impl<C: CommsInterface> RobotAgent<C> {
                     }
                 } else {
                     // Too far apart at this timestep — remove factor if it exists
-                    // (skip for now to avoid complex mid-array removal; factors deactivate via is_active)
+                    if self.ir_set.contains(bcast.robot_id, k) {
+                        self.ir_set.remove_single(bcast.robot_id, k, &mut self.graph);
+                    }
                 }
             }
         }

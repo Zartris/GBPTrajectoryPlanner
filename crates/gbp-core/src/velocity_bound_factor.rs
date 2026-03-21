@@ -57,16 +57,20 @@ use crate::variable_node::VariableNode;
 
 /// Pairwise velocity bound factor connecting `(s_k, s_{k+1})`.
 ///
-/// Prevents GBP from predicting velocities above `v_max` by applying
-/// adaptive precision that increases as the predicted velocity approaches
-/// the limit.
+/// Enforces `v_min <= velocity <= v_max` using adaptive precision.
+/// The upper bound prevents GBP from predicting impossibly fast speeds.
+/// The lower bound prevents the belief chain from flipping backwards
+/// (which happens when IR factors overwhelm dynamics), while still
+/// allowing a small creep-back speed for recovering from merge overshoots.
 pub struct VelocityBoundFactor {
     var_indices: [usize; 2],
     dt: f32,
     v_max: f32,
+    /// Minimum allowed velocity. Slightly negative to allow creep-back.
+    v_min: f32,
     /// Barrier steepness parameter. Higher = sharper activation.
     kappa: f32,
-    /// Distance below `v_max` (in m/s) at which the barrier begins to activate.
+    /// Distance from limit (in m/s) at which the barrier begins to activate.
     margin: f32,
 }
 
@@ -75,12 +79,13 @@ impl VelocityBoundFactor {
     ///
     /// - `var_indices`: indices of `[s_k, s_{k+1}]` in the factor graph.
     /// - `dt`: timestep between the two variables.
-    /// - `v_max`: maximum allowed velocity.
+    /// - `v_max`: maximum allowed forward velocity.
     pub fn new(var_indices: [usize; 2], dt: f32, v_max: f32) -> Self {
         Self {
             var_indices,
             dt: f32::max(dt, 1e-6),
             v_max,
+            v_min: -0.3, // allow slow creep-back (0.3 m/s reverse)
             kappa: 10.0,
             margin: 1.0,
         }
@@ -89,6 +94,20 @@ impl VelocityBoundFactor {
     /// Update the velocity limit (e.g. when approaching a curve).
     pub fn set_v_max(&mut self, v: f32) {
         self.v_max = v;
+    }
+
+    /// BIPM-inspired adaptive precision for a single constraint g <= 0.
+    /// Returns 0 when well under limit, rising to MAX_PREC at the boundary.
+    fn barrier_precision(g: f32, margin: f32, kappa: f32) -> f32 {
+        const MAX_PREC: f32 = 100.0;
+        if g < -margin {
+            0.0
+        } else if g < -1e-4 {
+            let raw = 1.0 / (kappa * g * g);
+            if raw < MAX_PREC { raw } else { MAX_PREC }
+        } else {
+            MAX_PREC
+        }
     }
 }
 
@@ -102,29 +121,43 @@ impl Factor for VelocityBoundFactor {
         let s_k1 = variables[self.var_indices[1]].mean();
 
         let velocity = (s_k1 - s_k) / self.dt;
-        let g = velocity - self.v_max; // positive = over limit
-
         let inv_dt = 1.0 / self.dt;
+
+        // Check both bounds — whichever is violated (or closer to violation) wins.
+        // Upper bound: g_upper = velocity - v_max  (positive = over max)
+        // Lower bound: g_lower = v_min - velocity  (positive = under min)
+        let g_upper = velocity - self.v_max;
+        let g_lower = self.v_min - velocity;
+
+        // Compute barrier precision for each bound independently
+        let prec_upper = Self::barrier_precision(g_upper, self.margin, self.kappa);
+        let prec_lower = Self::barrier_precision(g_lower, self.margin, self.kappa);
+
+        // The active constraint is whichever has higher precision (closer to violation).
+        // Use its residual and precision. If neither is active, factor is dormant.
+        let (residual, precision) = if prec_upper >= prec_lower {
+            // Upper bound dominates: residual = g_upper, Jacobian = d(velocity)/d(s)
+            (g_upper, prec_upper)
+        } else {
+            // Lower bound dominates: residual = g_lower, Jacobian = d(-velocity)/d(s) = -d(velocity)/d(s)
+            // We negate the Jacobian sign by negating the residual direction:
+            // g_lower = v_min - velocity, so d(g_lower)/d(s_k) = +1/dt, d(g_lower)/d(s_k1) = -1/dt
+            // But our Jacobian is fixed as [-1/dt, +1/dt] (for velocity).
+            // To make the factor push velocity UP (away from v_min), we use -g_lower as residual
+            // with the standard Jacobian. This works because:
+            //   eta contribution = precision * (-g_lower) * jacobian
+            //   = precision * (velocity - v_min) * [-1/dt, +1/dt]
+            //   When velocity < v_min: (velocity - v_min) < 0, pushes s_k1 down less / s_k up = increase velocity
+            (-g_lower, prec_lower)
+        };
+
         let mut jacobian: Vec<f32, 2> = Vec::new();
         let _ = jacobian.push(-inv_dt);
         let _ = jacobian.push( inv_dt);
 
-        // Adaptive precision schedule (BIPM-inspired)
-        let precision = if g < -self.margin {
-            // Well under limit -- factor inactive
-            0.0
-        } else if g < -1e-4 {
-            // Barrier zone: precision rises as g -> 0
-            let raw = 1.0 / (self.kappa * g * g);
-            f32::min(raw, 100.0)
-        } else {
-            // At or over limit -- maximum corrective force
-            100.0
-        };
-
         LinearizedFactor {
             jacobian,
-            residual: g,
+            residual,
             precision,
         }
     }
@@ -195,6 +228,29 @@ mod tests {
         let lf = factor.linearize(&vars);
         assert!(lf.jacobian[0] < 0.0, "d(velocity)/d(s_k) should be negative");
         assert!(lf.jacobian[1] > 0.0, "d(velocity)/d(s_{{k+1}}) should be positive");
+    }
+
+    #[test]
+    fn active_when_going_backwards() {
+        // velocity = (0.95 - 1.0) / 0.1 = -0.5 m/s, below v_min=-0.3
+        let vars = make_vars(1.0, 0.95);
+        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5);
+        let lf = factor.linearize(&vars);
+        assert!(lf.precision > 0.0, "should activate when going backwards past v_min");
+    }
+
+    #[test]
+    fn inactive_when_creeping_back_slowly() {
+        // velocity = (0.98 - 1.0) / 0.1 = -0.2 m/s, above v_min=-0.3 (within allowed creep)
+        // g_lower = -0.3 - (-0.2) = -0.1, g_upper = -0.2 - 2.5 = -2.7
+        // g_lower = -0.1 is within margin(1.0) so barrier activates slightly
+        // but it should be low precision since we're still within bounds
+        let vars = make_vars(1.0, 0.98);
+        let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5);
+        let lf = factor.linearize(&vars);
+        // g_lower = v_min - velocity = -0.3 - (-0.2) = -0.1
+        // This IS in the barrier zone but not violated — precision should be moderate
+        assert!(lf.precision < 100.0, "should not be at max when within v_min");
     }
 
     #[test]

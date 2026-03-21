@@ -57,6 +57,31 @@ impl InterRobotFactorSet {
         self.entries.iter()
     }
 
+    /// Remove a single factor for (robot_id, k). Handles swap-remove index patching.
+    pub fn remove_single<const K: usize, const F: usize>(
+        &mut self,
+        robot_id: RobotId,
+        k: usize,
+        graph: &mut FactorGraph<K, F>,
+    ) {
+        let pos = match self.entries.iter().position(|(rid, kk, _)| *rid == robot_id && *kk == k) {
+            Some(p) => p,
+            None => return,
+        };
+        let (_, _, factor_idx) = self.entries.swap_remove(pos);
+        let last_idx = graph.factor_count() - 1;
+        graph.remove_factor(factor_idx);
+
+        if factor_idx != last_idx {
+            for (_, _, stored_idx) in self.entries.iter_mut() {
+                if *stored_idx == last_idx {
+                    *stored_idx = factor_idx;
+                    break;
+                }
+            }
+        }
+    }
+
     /// Remove ALL factors for a specific robot. Handles swap-remove index patching.
     pub fn remove_robot<const K: usize, const F: usize>(
         &mut self,
