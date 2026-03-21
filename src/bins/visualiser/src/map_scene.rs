@@ -1,8 +1,14 @@
 // src/bins/visualiser/src/map_scene.rs
 use bevy::prelude::*;
 use bevy::gizmos::config::{GizmoConfigStore, DefaultGizmoConfigGroup, GizmoLineConfig};
-use gbp_map::map::{EdgeGeometry, NodeType};
+use gbp_map::map::{EdgeGeometry, EdgeId, NodeType};
 use crate::state::MapRes;
+
+/// Cached polylines for each edge — computed once at startup, drawn every frame.
+#[derive(Resource)]
+pub struct EdgePolylines {
+    pub lines: std::vec::Vec<(EdgeId, std::vec::Vec<Vec3>)>,
+}
 
 const PHYSICAL_TRACK_STL: &str = "models/physical_track.stl";
 const MAGNETIC_MAINLINES_STL: &str = "models/magnetic_mainlines.stl";
@@ -12,7 +18,7 @@ pub struct MapScenePlugin;
 
 impl Plugin for MapScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (configure_gizmos, spawn_map_scene, spawn_environment_stl).chain())
+        app.add_systems(Startup, (configure_gizmos, spawn_map_scene, spawn_environment_stl, build_edge_polylines).chain())
            .add_systems(Update, draw_edge_gizmos);
     }
 }
@@ -108,31 +114,63 @@ fn spawn_map_scene(
     }
 }
 
-/// Number of line segments used to render each NURBS edge.
+/// Number of line segments used to render each edge.
 pub const NURBS_EDGE_SAMPLES: usize = 32;
 
-/// Draw edge gizmo lines each frame (2px wide, bright yellow).
+/// Cache sampled polylines at startup so draw_edge_gizmos doesn't recompute per frame.
+fn build_edge_polylines(
+    mut commands: Commands,
+    map: Res<MapRes>,
+) {
+    let mut lines = std::vec::Vec::new();
+    for edge in map.0.edges.iter() {
+        let n = NURBS_EDGE_SAMPLES;
+        let len = edge.geometry.length();
+        let pts: std::vec::Vec<Vec3> = (0..=n).map(|i| {
+            let s = (i as f32 / n as f32) * len;
+            match map.0.eval_position(edge.id, s) {
+                Some(p) => map_to_bevy(p),
+                None => Vec3::ZERO,
+            }
+        }).collect();
+        lines.push((edge.id, pts));
+    }
+    commands.insert_resource(EdgePolylines { lines });
+}
+
+/// Draw edge gizmo lines each frame from cached polylines (2px wide, bright yellow).
 fn draw_edge_gizmos(
+    polylines: Option<Res<EdgePolylines>>,
     map: Res<MapRes>,
     mut gizmos: Gizmos,
 ) {
     let color = Color::srgb(1.0, 1.0, 0.3);
 
-    for edge in map.0.edges.iter() {
-        match &edge.geometry {
-            EdgeGeometry::Line { start, end, .. } => {
-                gizmos.line(map_to_bevy(*start), map_to_bevy(*end), color);
+    if let Some(cache) = polylines {
+        // Fast path: draw from cache
+        for (_id, pts) in &cache.lines {
+            for pair in pts.windows(2) {
+                gizmos.line(pair[0], pair[1], color);
             }
-            EdgeGeometry::Nurbs(n) => {
-                let mut prev = map_to_bevy(
-                    gbp_map::nurbs::eval_point(0.0, &n.control_points, &n.knots, n.degree as usize)
-                );
-                for i in 1..=NURBS_EDGE_SAMPLES {
-                    let t = i as f32 / NURBS_EDGE_SAMPLES as f32;
-                    let p = gbp_map::nurbs::eval_point(t, &n.control_points, &n.knots, n.degree as usize);
-                    let cur = map_to_bevy(p);
-                    gizmos.line(prev, cur, color);
-                    prev = cur;
+        }
+    } else {
+        // Fallback before cache is built (first frame)
+        for edge in map.0.edges.iter() {
+            match &edge.geometry {
+                EdgeGeometry::Line { start, end, .. } => {
+                    gizmos.line(map_to_bevy(*start), map_to_bevy(*end), color);
+                }
+                EdgeGeometry::Nurbs(n) => {
+                    let mut prev = map_to_bevy(
+                        gbp_map::nurbs::eval_point(0.0, &n.control_points, &n.knots, n.degree as usize)
+                    );
+                    for i in 1..=NURBS_EDGE_SAMPLES {
+                        let t = i as f32 / NURBS_EDGE_SAMPLES as f32;
+                        let p = gbp_map::nurbs::eval_point(t, &n.control_points, &n.knots, n.degree as usize);
+                        let cur = map_to_bevy(p);
+                        gizmos.line(prev, cur, color);
+                        prev = cur;
+                    }
                 }
             }
         }
