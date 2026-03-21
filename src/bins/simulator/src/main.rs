@@ -164,7 +164,7 @@ async fn main() {
     let physics0 = Arc::new(Mutex::new(PhysicsState::new(total_length0)));
     let delayed_start = args.scenario == "endcollision";
     if start0 == start1 && !delayed_start {
-        physics0.lock().unwrap().position_s = 0.2; // slight head start in follow mode
+        physics0.lock().unwrap().position_s = 1.5; // head start >= D_SAFE to avoid initial chassis overlap
     }
     // When both robots share the same goal, Robot 1 must stop d_safe before
     // the goal. Without this, both robots' physics clamp at the same total_length,

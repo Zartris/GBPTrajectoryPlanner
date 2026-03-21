@@ -63,8 +63,10 @@ impl DynamicConstraints {
         // Acceleration limit
         let clamped_accel = accel.clamp(-self.max_accel, self.max_accel);
 
-        // Integrate to velocity, clamp to [0, max_speed]
-        let velocity = (self.last_velocity + clamped_accel * dt).clamp(0.0, self.max_speed);
+        // Integrate to velocity, clamp to [v_min, max_speed].
+        // v_min = -0.3 allows slow reverse creep for merge overshoot recovery.
+        const V_MIN: f32 = -0.3;
+        let velocity = (self.last_velocity + clamped_accel * dt).clamp(V_MIN, self.max_speed);
 
         self.last_accel = clamped_accel;
         self.last_velocity = velocity;

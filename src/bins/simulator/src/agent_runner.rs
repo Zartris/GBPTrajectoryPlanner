@@ -205,12 +205,9 @@ pub async fn agent_task(
                     global_s,
                 );
             }
-            // Pass map-coords 3D position so other robots' safety cap sees correct pos
-            let pos_3d_map = match r._map.eval_position(out.current_edge, out.local_s) {
-                Some(p) => p,
-                None => [0.0, 0.0, 0.0],
-            };
-            r.broadcast_state(out.current_edge, global_s, pos_3d_map);
+            // NOTE: step() already broadcasts full RobotBroadcast with belief_means/vars
+            // via make_broadcast(). Do NOT call broadcast_state() here — it sends a partial
+            // message with default beliefs, overwriting the full one.
             out
         };
 

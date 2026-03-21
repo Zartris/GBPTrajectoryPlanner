@@ -22,7 +22,7 @@ const GBP_INTERNAL_ITERS: usize = 3;
 const GBP_EXTERNAL_ITERS: usize = 5;
 const DT: f32 = 0.1; // seconds per GBP timestep
 const D_SAFE: f32 = 1.3; // minimum center-to-center clearance (m) — chassis 1.15m + 0.15m margin
-const SIGMA_R: f32 = 0.12; // inter-robot factor noise (precision ≈ 44 vs dynamics precision = 4)
+const SIGMA_R: f32 = 0.12; // inter-robot factor noise (precision ≈ 69 vs dynamics precision = 4)
 const IR_RAMP_START: f32 = 2.6; // 2× d_safe — distance where IR factor starts ramping up
 const IR_ACTIVATION_RANGE: f32 = 3.0; // distance where IR factors are spawned/despawned
 const AGENT_DT: f32 = 0.02; // 50 Hz agent tick
@@ -211,10 +211,12 @@ impl<C: CommsInterface> RobotAgent<C> {
         // The agent only uses pos_3d for safety cap distance calculations.
 
         // 0. Anchor variable[0] at observed position (strong prior).
-        // Only set the prior — iterate()'s variable_to_factor_pass will reset eta/lambda
-        // from prior and re-accumulate factor messages. Setting eta/lambda here is redundant.
+        // Set both prior AND current eta/lambda so variables[0].mean() returns
+        // the correct position_s immediately (used by update_dynamics_v_nom at step 3).
         self.graph.variables[0].prior_eta = self.position_s * 1000.0;
         self.graph.variables[0].prior_lambda = 1000.0;
+        self.graph.variables[0].eta = self.position_s * 1000.0;
+        self.graph.variables[0].lambda = 1000.0;
 
         // 1. Receive broadcasts from neighbours. If none arrived this tick,
         // use the cached version so IR factors don't flicker on/off.
@@ -239,7 +241,8 @@ impl<C: CommsInterface> RobotAgent<C> {
         // 6. Extract commanded velocity from GBP
         let s0 = self.graph.variables[0].mean();
         let s1 = self.graph.variables[1].mean();
-        let raw_velocity = ((s1 - s0) / DT).max(0.0);
+        // Allow negative velocity (creep-back) — VelocityBoundFactor bounds at v_min=-0.3
+        let raw_velocity = (s1 - s0) / DT;
 
         // 7. Post-GBP dynamic constraints (NOT part of factor graph).
         // Smooths the raw GBP velocity through jerk, accel, and speed limits.
