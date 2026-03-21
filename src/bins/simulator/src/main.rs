@@ -20,19 +20,15 @@ use clap::Parser;
 
 #[derive(Parser)]
 struct Args {
-    /// Path to map YAML file
+    /// Path to system config TOML (omit for defaults)
     #[arg(long)]
-    map: std::path::PathBuf,
+    config: Option<std::path::PathBuf>,
+    /// Path to scenario TOML
+    #[arg(long)]
+    scenario: std::path::PathBuf,
     /// Address to bind the WebSocket server
     #[arg(long, default_value = "0.0.0.0:3000")]
     bind: String,
-    /// Scenario: "fleet" (N random routes), "merge" (2 robots converging),
-    /// "endcollision" (2 robots same route, staggered start positions)
-    #[arg(long, default_value = "fleet")]
-    scenario: String,
-    /// Number of robots (used in fleet mode)
-    #[arg(long, default_value = "4")]
-    num_robots: usize,
 }
 
 /// Convert A* edge path to (EdgeId, length) pairs.
@@ -62,13 +58,6 @@ fn pick_start_nodes(map: &Map, n: usize) -> std::vec::Vec<NodeId> {
     (0..n).map(|i| waypoints[i * step]).collect()
 }
 
-/// Find a node that has an edge leading to `target` (i.e. a predecessor).
-fn find_predecessor(map: &Map, target: NodeId) -> Option<NodeId> {
-    map.edges.iter()
-        .find(|e| e.end == target)
-        .map(|e| e.start)
-}
-
 /// Pick a goal node reachable from `start` (excluding start itself), selected by seed.
 fn pick_random_goal(map: &Map, start: NodeId, seed: u32) -> Option<NodeId> {
     let mut reachable: std::vec::Vec<NodeId> = Vec::new();
@@ -93,15 +82,29 @@ async fn main() {
         .init();
 
     let args = Args::parse();
-    info!("loading map from {}", args.map.display());
 
-    let yaml = std::fs::read_to_string(&args.map)
-        .unwrap_or_else(|e| panic!("cannot read map: {}", e));
-    let (map, _node_names) = gbp_map::parser::parse_yaml(&yaml)
+    // Load config
+    let config = if let Some(ref path) = args.config {
+        let toml_str = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("cannot read config {}: {}", path.display(), e));
+        toml_config::parse_config(&toml_str)
+    } else {
+        gbp_core::GbpConfig::default()
+    };
+    info!("config loaded: d_safe={}, iters={}/{}, v_min={}, v_max={}",
+        config.d_safe, config.internal_iters, config.external_iters, config.v_min, config.v_max_default);
+
+    // Load scenario
+    let scenario_str = std::fs::read_to_string(&args.scenario)
+        .unwrap_or_else(|e| panic!("cannot read scenario {}: {}", args.scenario.display(), e));
+    let scenario = toml_config::parse_scenario(&scenario_str);
+    info!("scenario '{}', map: {}", scenario.scenario.name, scenario.scenario.map);
+
+    // Load map (path from scenario file)
+    let yaml = std::fs::read_to_string(&scenario.scenario.map)
+        .unwrap_or_else(|e| panic!("cannot read map {}: {}", scenario.scenario.map, e));
+    let (map, node_names) = gbp_map::parser::parse_yaml(&yaml)
         .unwrap_or_else(|e| panic!("map parse error: {}", e));
-
-    let default_start = map.edges.first().expect("map has no edges").start;
-    let default_goal = map.nodes.last().expect("map has no nodes").id;
 
     let map_arc = Arc::new(map);
 
@@ -138,70 +141,32 @@ async fn main() {
         }
     });
 
-    // ── Build (start, goal) pairs based on scenario ──
-    let assignments: std::vec::Vec<(NodeId, NodeId)> = match args.scenario.as_str() {
-        "merge" => {
-            // Two robots from different entry points converging on the same goal
-            let s0 = NodeId(3);  // P004
-            let s1 = NodeId(30); // P033
-            let g = default_goal;
-            if gbp_map::astar::astar(&map_arc, s0, g).is_some()
-                && gbp_map::astar::astar(&map_arc, s1, g).is_some()
-            {
-                info!("merge scenario: robot 0 at {:?}, robot 1 at {:?}, goal {:?}", s0, s1, g);
-                vec![(s0, g), (s1, g)]
-            } else {
-                warn!("merge scenario: P004/P033 can't reach goal, falling back to auto-discovery");
-                let mut alt_start = default_start;
-                let default_path = gbp_map::astar::astar(&map_arc, default_start, default_goal);
-                for node in map_arc.nodes.iter() {
-                    if node.id == default_start { continue; }
-                    if let Some(alt_path) = gbp_map::astar::astar(&map_arc, node.id, default_goal) {
-                        if let Some(ref dp) = default_path {
-                            if !alt_path.is_empty() && !dp.is_empty()
-                                && alt_path[0] != dp[0]
-                                && alt_path.iter().any(|e| dp.contains(e))
-                            {
-                                alt_start = node.id;
-                                break;
-                            }
-                        }
-                    }
-                }
-                vec![(default_start, default_goal), (alt_start, default_goal)]
-            }
-        }
-        "endcollision" => {
-            // Two robots on the same route, staggered: robot 0 at start, robot 1 at predecessor
-            let s0 = NodeId(22); // P025
-            let g = NodeId(11);  // P012
-            let s1 = find_predecessor(&map_arc, s0).unwrap_or(s0);
-            if gbp_map::astar::astar(&map_arc, s0, g).is_some()
-                && gbp_map::astar::astar(&map_arc, s1, g).is_some()
-            {
-                info!("endcollision scenario: robot 0 at {:?}, robot 1 at {:?}, goal {:?}", s0, s1, g);
-                vec![(s0, g), (s1, g)]
-            } else {
-                warn!("endcollision scenario: no path, falling back to default");
-                vec![(default_start, default_goal), (default_start, default_goal)]
-            }
-        }
-        _ => {
-            // Fleet mode: N robots with distributed starts and random goals
-            let starts = pick_start_nodes(&map_arc, args.num_robots);
-            starts.iter().enumerate().filter_map(|(i, &s)| {
-                pick_random_goal(&map_arc, s, i as u32).map(|g| (s, g))
-            }).collect()
-        }
+    // ── Build (start, goal) pairs from scenario file ──
+    let assignments: std::vec::Vec<(NodeId, NodeId)> = if !scenario.robots.is_empty() {
+        // Explicit robot assignments — resolve node names
+        scenario.robots.iter().map(|r| {
+            let start = *node_names.get(&r.start)
+                .unwrap_or_else(|| panic!("scenario node '{}' not found in map", r.start));
+            let goal = *node_names.get(&r.goal)
+                .unwrap_or_else(|| panic!("scenario node '{}' not found in map", r.goal));
+            (start, goal)
+        }).collect()
+    } else if scenario.scenario.auto_assign {
+        let starts = pick_start_nodes(&map_arc, scenario.scenario.num_robots);
+        starts.iter().enumerate().filter_map(|(i, &s)| {
+            pick_random_goal(&map_arc, s, i as u32).map(|g| (s, g))
+        }).collect()
+    } else {
+        panic!("scenario must have [[robots]] entries or auto_assign = true");
     };
 
-    info!("scenario={}, spawning {} robots", args.scenario, assignments.len());
+    info!("scenario '{}': spawning {} robots", scenario.scenario.name, assignments.len());
 
     // ── Spawn all robots in a single unified loop ──
     for (i, &(start, goal)) in assignments.iter().enumerate() {
         let rx = bcast_tx.subscribe();
         let comms = SimComms::new(bcast_tx.clone(), rx);
-        let mut runner = AgentRunner::new(comms, map_arc.clone(), i as u32, &gbp_core::GbpConfig::default());
+        let mut runner = AgentRunner::new(comms, map_arc.clone(), i as u32, &config);
 
         let total_length = if let Some(path) = gbp_map::astar::astar(&map_arc, start, goal) {
             let traj = build_trajectory_edges(&map_arc, &path);
