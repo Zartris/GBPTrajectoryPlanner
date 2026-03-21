@@ -35,9 +35,9 @@
 //! - **Well under limit** (`g < -margin`): precision = 0 (factor inactive,
 //!   robot is safely below `v_max`).
 //! - **Barrier zone** (`-margin < g < -epsilon`): precision =
-//!   `1 / (kappa * g^2)`, capped at 1000. As `g -> 0` (velocity approaches
+//!   `1 / (kappa * g^2)`, capped at 100. As `g -> 0` (velocity approaches
 //!   `v_max`), precision rises steeply, creating the barrier effect.
-//! - **At or over limit** (`g >= -epsilon`): precision = 1000 (hard clamp,
+//! - **At or over limit** (`g >= -epsilon`): precision = 100 (hard clamp,
 //!   maximum corrective force).
 //!
 //! The Jacobian is identical to the dynamics factor: `[-1/dt, +1/dt]`, and the
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn max_precision_when_over_limit() {
         // velocity = (0.3 - 0.0) / 0.1 = 3.0 m/s, v_max = 2.5
-        // g = 0.5 >= -1e-4 => precision = 1000
+        // g = 0.5 >= -1e-4 => precision = 100
         let vars = make_vars(0.0, 0.3);
         let factor = VelocityBoundFactor::new([0, 1], 0.1, 2.5);
         let lf = factor.linearize(&vars);

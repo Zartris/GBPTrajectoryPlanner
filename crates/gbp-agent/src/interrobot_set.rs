@@ -68,6 +68,7 @@ impl InterRobotFactorSet {
             Some(p) => p,
             None => return,
         };
+        if graph.factor_count() == 0 { self.entries.clear(); return; }
         let (_, _, factor_idx) = self.entries.swap_remove(pos);
         let last_idx = graph.factor_count() - 1;
         graph.remove_factor(factor_idx);
@@ -88,12 +89,12 @@ impl InterRobotFactorSet {
         robot_id: RobotId,
         graph: &mut FactorGraph<K, F>,
     ) {
-        // Collect indices to remove (in reverse to avoid invalidation)
         loop {
             let pos = match self.entries.iter().position(|(rid, _, _)| *rid == robot_id) {
                 Some(p) => p,
                 None => break,
             };
+            if graph.factor_count() == 0 { self.entries.clear(); return; }
             let (_, _, factor_idx) = self.entries.swap_remove(pos);
             let last_idx = graph.factor_count() - 1;
             graph.remove_factor(factor_idx);
@@ -116,6 +117,7 @@ impl InterRobotFactorSet {
         graph: &mut FactorGraph<K, F>,
     ) {
         while let Some((_, _, factor_idx)) = self.entries.pop() {
+            if graph.factor_count() == 0 { self.entries.clear(); return; }
             let last_idx = graph.factor_count() - 1;
             graph.remove_factor(factor_idx);
 
