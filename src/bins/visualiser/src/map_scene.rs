@@ -4,11 +4,15 @@ use bevy::gizmos::config::{GizmoConfigStore, DefaultGizmoConfigGroup, GizmoLineC
 use gbp_map::map::{EdgeGeometry, NodeType};
 use crate::state::MapRes;
 
+const PHYSICAL_TRACK_STL: &str = "models/physical_track.stl";
+const MAGNETIC_MAINLINES_STL: &str = "models/magnetic_mainlines.stl";
+const MAGNETIC_MARKERS_STL: &str = "models/magnetic_markers.stl";
+
 pub struct MapScenePlugin;
 
 impl Plugin for MapScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (spawn_map_scene, configure_gizmos))
+        app.add_systems(Startup, (configure_gizmos, spawn_map_scene, spawn_environment_stl).chain())
            .add_systems(Update, draw_edge_gizmos);
     }
 }
@@ -133,6 +137,46 @@ fn draw_edge_gizmos(
             }
         }
     }
+}
+
+/// Load and spawn the three environment STL meshes (track, mainlines, markers).
+fn spawn_environment_stl(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // Physical track — grey, semi-transparent
+    commands.spawn((
+        Mesh3d(asset_server.load(PHYSICAL_TRACK_STL)),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgba(0.45, 0.45, 0.45, 0.8),
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        })),
+        Transform::IDENTITY,
+    ));
+
+    // Magnetic mainlines — dark blue, semi-transparent
+    commands.spawn((
+        Mesh3d(asset_server.load(MAGNETIC_MAINLINES_STL)),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgba(0.1, 0.1, 0.7, 0.6),
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        })),
+        Transform::IDENTITY,
+    ));
+
+    // Magnetic markers — yellow, semi-transparent
+    commands.spawn((
+        Mesh3d(asset_server.load(MAGNETIC_MARKERS_STL)),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgba(0.8, 0.8, 0.0, 0.6),
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        })),
+        Transform::IDENTITY,
+    ));
 }
 
 #[cfg(test)]
