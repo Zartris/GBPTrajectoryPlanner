@@ -8,6 +8,19 @@ use crate::state::RobotStates;
 #[derive(Resource, Default)]
 pub struct SimPaused(pub bool);
 
+/// Global simulation parameters (read-only display for now; live tuning deferred to M6).
+#[derive(Resource)]
+pub struct GlobalParams {
+    pub num_robots: usize,
+    pub random_mode: bool,
+}
+
+impl Default for GlobalParams {
+    fn default() -> Self {
+        Self { num_robots: 4, random_mode: false }
+    }
+}
+
 /// Tracks backend message rate by counting messages per second.
 #[derive(Resource)]
 pub struct BackendStats {
@@ -45,6 +58,7 @@ impl Plugin for UiPlugin {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
            .init_resource::<SimPaused>()
            .init_resource::<BackendStats>()
+           .init_resource::<GlobalParams>()
            .add_systems(EguiPrimaryContextPass, draw_hud);
     }
 }
@@ -63,6 +77,7 @@ fn draw_hud(
     mut paused: ResMut<SimPaused>,
     diagnostics: Res<DiagnosticsStore>,
     backend: Res<BackendStats>,
+    params: Res<GlobalParams>,
 ) -> Result {
     let ctx = ctxs.ctx_mut()?;
 
@@ -92,6 +107,10 @@ fn draw_hud(
         if ui.button(label).clicked() {
             paused.0 = !paused.0;
         }
+        ui.separator();
+        ui.label(format!("Fleet size: {}", params.num_robots));
+        ui.label(format!("Random mode: {}", if params.random_mode { "ON" } else { "OFF" }));
+        ui.label(format!("Connected: {}", states.0.len()));
     });
 
     // Per-robot side panels
