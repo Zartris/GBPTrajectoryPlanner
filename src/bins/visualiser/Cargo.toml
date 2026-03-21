@@ -13,6 +13,7 @@ gbp-map    = { path = "../../../crates/gbp-map", features = ["parse"] }
 heapless   = { workspace = true }
 bevy       = { workspace = true }
 bevy_egui  = { workspace = true }
+bevy_stl   = { workspace = true }
 tokio      = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util      = { workspace = true }

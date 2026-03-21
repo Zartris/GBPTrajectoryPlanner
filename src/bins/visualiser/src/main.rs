@@ -47,6 +47,7 @@ fn main() {
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
+        .add_plugins(bevy_stl::StlPlugin)
         .insert_resource(MapRes(map))
         .insert_resource(RobotStates::default())
         .insert_resource(WsInbox(inbox))
