@@ -2,6 +2,7 @@ use heapless::Vec;
 use crate::variable_node::VariableNode;
 use crate::dynamics_factor::DynamicsFactor;
 use crate::interrobot_factor::InterRobotFactor;
+use crate::velocity_bound_factor::VelocityBoundFactor;
 
 /// Result of linearizing a factor around current variable beliefs.
 #[derive(Clone, Debug)]
@@ -37,21 +38,24 @@ pub trait Factor {
 pub enum FactorKind {
     Dynamics(DynamicsFactor),
     InterRobot(InterRobotFactor),
+    VelocityBound(VelocityBoundFactor),
 }
 
 impl FactorKind {
     pub fn as_factor(&self) -> &dyn Factor {
         match self {
             // FACTOR EXTENSION POINT 2/3
-            Self::Dynamics(f)   => f,
-            Self::InterRobot(f) => f,
+            Self::Dynamics(f)       => f,
+            Self::InterRobot(f)     => f,
+            Self::VelocityBound(f)  => f,
         }
     }
     pub fn as_factor_mut(&mut self) -> &mut dyn Factor {
         match self {
             // FACTOR EXTENSION POINT 2/3 (mut)
-            Self::Dynamics(f)   => f,
-            Self::InterRobot(f) => f,
+            Self::Dynamics(f)       => f,
+            Self::InterRobot(f)     => f,
+            Self::VelocityBound(f)  => f,
         }
     }
 }
