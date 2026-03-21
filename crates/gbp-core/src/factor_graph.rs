@@ -93,12 +93,12 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
     /// TI=10 internal iterations per TE=10 external iterations as the default.
     pub fn iterate_split(&mut self, n_internal: usize, n_external: usize) {
         for _ in 0..n_external {
-            // Internal convergence rounds
+            // Internal convergence rounds: only internal factors participate
             for _ in 0..n_internal {
                 self.factor_to_variable_pass_filtered(true);
-                self.variable_to_factor_pass();
+                self.variable_to_factor_pass_filtered_accum(true);
             }
-            // One external round
+            // One external round: all factors participate
             self.factor_to_variable_pass_filtered(false);
             self.variable_to_factor_pass();
         }
@@ -257,17 +257,28 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
 
     fn variable_to_factor_pass(&mut self) {
         // Reset all variables to their prior, then accumulate all factor messages.
-        // NOTE: This is a "full marginal" approach — each variable's belief is
-        // prior + sum(all_factor_messages), not a per-factor cavity. For standard
-        // GBP, the variable-to-factor message would be marginal - factor_message
-        // (cavity). The pairwise F-to-V pass above correctly uses cavities, so
-        // convergence is maintained for tree-structured subgraphs. Message damping
-        // stabilises the loopy case.
         for v in self.variables.iter_mut() {
             v.reset_to_prior();
         }
         for f in self.factors.iter() {
             if !f.kind.as_factor().is_active() { continue; }
+            for (i, &var_idx) in f.kind.as_factor().variable_indices().iter().enumerate() {
+                self.variables[var_idx].eta    += f.msg_eta[i];
+                self.variables[var_idx].lambda += f.msg_lambda[i];
+            }
+        }
+    }
+
+    /// Variable-to-factor pass that only accumulates internal factor messages.
+    /// During internal iterations, external (IR) factor messages are excluded
+    /// so the dynamics chain converges without stale inter-robot influence.
+    fn variable_to_factor_pass_filtered_accum(&mut self, internal_only: bool) {
+        for v in self.variables.iter_mut() {
+            v.reset_to_prior();
+        }
+        for f in self.factors.iter() {
+            if !f.kind.as_factor().is_active() { continue; }
+            if internal_only && !f.kind.is_internal() { continue; }
             for (i, &var_idx) in f.kind.as_factor().variable_indices().iter().enumerate() {
                 self.variables[var_idx].eta    += f.msg_eta[i];
                 self.variables[var_idx].lambda += f.msg_lambda[i];
