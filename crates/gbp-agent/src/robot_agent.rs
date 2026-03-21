@@ -587,9 +587,15 @@ impl<C: CommsInterface> RobotAgent<C> {
                     }
                 }
             }
-            let cav_lambda = cav_lambda.max(1e-10);
-            let _ = means.push(cav_eta / cav_lambda);
-            let _ = vars.push((1.0 / cav_lambda).min(1e6));
+            // If cavity lambda is invalid (IR message overwhelmed the marginal),
+            // fall back to full marginal to avoid injecting garbage beliefs.
+            if cav_lambda > 1e-6 {
+                let _ = means.push(cav_eta / cav_lambda);
+                let _ = vars.push((1.0 / cav_lambda).min(1e6));
+            } else {
+                let _ = means.push(v.mean());
+                let _ = vars.push(v.variance().min(1e6));
+            }
         }
         RobotBroadcast {
             robot_id: self.robot_id,
