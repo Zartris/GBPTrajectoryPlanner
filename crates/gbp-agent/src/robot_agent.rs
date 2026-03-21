@@ -230,6 +230,8 @@ impl<C: CommsInterface> RobotAgent<C> {
 
         // 2. Update inter-robot factors (add/remove as planned edges change)
         self.update_interrobot_factors(&broadcasts, map);
+        // Re-accumulate beliefs to clear stale messages from any removed factors
+        self.graph.reaccumulate_beliefs();
 
         // 3. Update v_nom on dynamics factors from current trajectory
         self.update_dynamics_v_nom(map);
