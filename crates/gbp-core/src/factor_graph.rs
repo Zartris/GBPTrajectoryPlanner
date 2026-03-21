@@ -93,13 +93,16 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
     /// TI=10 internal iterations per TE=10 external iterations as the default.
     pub fn iterate_split(&mut self, n_internal: usize, n_external: usize) {
         for _ in 0..n_external {
-            // Internal convergence rounds: only internal factors participate
+            // Internal convergence rounds: only internal factors update their messages,
+            // but variables always accumulate ALL messages (including stale IR messages
+            // from the previous external round). This keeps cavities correct.
             for _ in 0..n_internal {
                 self.factor_to_variable_pass_filtered(true);
-                self.variable_to_factor_pass_filtered_accum(true);
+                self.variable_to_factor_pass();
             }
-            // One external round: all factors participate
-            self.factor_to_variable_pass_filtered(false);
+            // External round: ALL factors participate so dynamics can respond to
+            // newly injected IR evidence within the same outer iteration.
+            self.factor_to_variable_pass();
             self.variable_to_factor_pass();
         }
     }
@@ -269,20 +272,4 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
         }
     }
 
-    /// Variable-to-factor pass that only accumulates internal factor messages.
-    /// During internal iterations, external (IR) factor messages are excluded
-    /// so the dynamics chain converges without stale inter-robot influence.
-    fn variable_to_factor_pass_filtered_accum(&mut self, internal_only: bool) {
-        for v in self.variables.iter_mut() {
-            v.reset_to_prior();
-        }
-        for f in self.factors.iter() {
-            if !f.kind.as_factor().is_active() { continue; }
-            if internal_only && !f.kind.is_internal() { continue; }
-            for (i, &var_idx) in f.kind.as_factor().variable_indices().iter().enumerate() {
-                self.variables[var_idx].eta    += f.msg_eta[i];
-                self.variables[var_idx].lambda += f.msg_lambda[i];
-            }
-        }
-    }
 }
