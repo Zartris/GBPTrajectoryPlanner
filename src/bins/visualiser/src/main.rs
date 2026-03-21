@@ -37,15 +37,21 @@ fn main() {
 
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.1))) // dark blue background
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "GBP Trajectory Planner".into(),
-                resolution: (1280u32, 720u32).into(),
-                present_mode: bevy::window::PresentMode::AutoNoVsync,
+        .add_plugins(DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "GBP Trajectory Planner".into(),
+                    resolution: (1280u32, 720u32).into(),
+                    present_mode: bevy::window::PresentMode::AutoNoVsync,
+                    ..default()
+                }),
                 ..default()
-            }),
-            ..default()
-        }))
+            })
+            .set(AssetPlugin {
+                file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../../../assets").to_string(),
+                ..default()
+            })
+        )
         .add_plugins(EguiPlugin::default())
         .add_plugins(bevy_stl::StlPlugin)
         .insert_resource(MapRes(map))
