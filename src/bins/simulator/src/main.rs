@@ -97,7 +97,7 @@ async fn main() {
 
     let yaml = std::fs::read_to_string(&args.map)
         .unwrap_or_else(|e| panic!("cannot read map: {}", e));
-    let map = gbp_map::parser::parse_yaml(&yaml)
+    let (map, _node_names) = gbp_map::parser::parse_yaml(&yaml)
         .unwrap_or_else(|e| panic!("map parse error: {}", e));
 
     let default_start = map.edges.first().expect("map has no edges").start;

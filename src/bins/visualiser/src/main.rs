@@ -26,7 +26,7 @@ fn main() {
         .unwrap_or_else(|_| "maps/test_loop_map.yaml".to_string());
     let yaml = std::fs::read_to_string(&map_path)
         .unwrap_or_else(|e| panic!("cannot read map {}: {}", map_path, e));
-    let map = gbp_map::parser::parse_yaml(&yaml)
+    let (map, _node_names) = gbp_map::parser::parse_yaml(&yaml)
         .unwrap_or_else(|e| panic!("map parse error: {}", e));
 
     // Connect WebSocket client with shutdown flag
