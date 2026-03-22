@@ -3,10 +3,12 @@
 //! Which edge the robot is on is derived from the trajectory, not managed by physics.
 
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
 use gbp_agent::RobotAgent;
 use gbp_comms::{CommsInterface, ObservationUpdate, RobotBroadcast, RobotStateMsg, RobotSource};
+use gbp_core::GbpConfig;
 use gbp_map::map::{EdgeId, Map};
 use gbp_map::MAX_HORIZON;
 use heapless::Vec as HVec;
@@ -28,8 +30,8 @@ pub struct AgentRunner {
 }
 
 impl AgentRunner {
-    pub fn new(comms: SimComms, map: Arc<Map>, robot_id: u32) -> Self {
-        let agent = RobotAgent::new(comms, &*map, robot_id);
+    pub fn new(comms: SimComms, map: Arc<Map>, robot_id: u32, config: &GbpConfig) -> Self {
+        let agent = RobotAgent::new(comms, &*map, robot_id, config);
         Self {
             _map: map,
             agent,
@@ -175,10 +177,12 @@ pub async fn agent_task(
     runner: Arc<Mutex<AgentRunner>>,
     tx: broadcast::Sender<RobotStateMsg>,
     robot_id: u32,
+    paused: Arc<AtomicBool>,
 ) {
     let mut ticker = interval(Duration::from_millis(20)); // 50 Hz (matches physics)
     loop {
         ticker.tick().await;
+        if paused.load(Ordering::Relaxed) { continue; }
 
         let global_s = physics.lock().unwrap_or_else(|e| e.into_inner()).position_s;
 
@@ -295,7 +299,7 @@ mod tests {
     #[test]
     fn edge_at_s_first_edge() {
         let (map, traj) = two_edge_map();
-        let mut runner = AgentRunner::new(make_comms(), map, 0);
+        let mut runner = AgentRunner::new(make_comms(), map, 0, &GbpConfig::default());
         runner.set_trajectory(traj);
         let (edge, local) = runner.edge_at_s(2.5);
         assert_eq!(edge, EdgeId(0));
@@ -305,7 +309,7 @@ mod tests {
     #[test]
     fn edge_at_s_second_edge() {
         let (map, traj) = two_edge_map();
-        let mut runner = AgentRunner::new(make_comms(), map, 0);
+        let mut runner = AgentRunner::new(make_comms(), map, 0, &GbpConfig::default());
         runner.set_trajectory(traj);
         let (edge, local) = runner.edge_at_s(7.0);
         assert_eq!(edge, EdgeId(1));
@@ -315,7 +319,7 @@ mod tests {
     #[test]
     fn edge_at_s_past_end() {
         let (map, traj) = two_edge_map();
-        let mut runner = AgentRunner::new(make_comms(), map, 0);
+        let mut runner = AgentRunner::new(make_comms(), map, 0, &GbpConfig::default());
         runner.set_trajectory(traj);
         let (edge, local) = runner.edge_at_s(12.0);
         assert_eq!(edge, EdgeId(1));
@@ -325,7 +329,7 @@ mod tests {
     #[test]
     fn step_returns_positive_velocity() {
         let (map, traj) = two_edge_map();
-        let mut runner = AgentRunner::new(make_comms(), map, 0);
+        let mut runner = AgentRunner::new(make_comms(), map, 0, &GbpConfig::default());
         runner.set_trajectory(traj);
         let out = runner.step(0.0);
         assert!(out.velocity > 0.0, "v={}", out.velocity);
@@ -334,7 +338,7 @@ mod tests {
     #[test]
     fn total_length_is_sum_of_edges() {
         let (map, traj) = two_edge_map();
-        let mut runner = AgentRunner::new(make_comms(), map, 0);
+        let mut runner = AgentRunner::new(make_comms(), map, 0, &GbpConfig::default());
         let total = runner.set_trajectory(traj);
         assert!((total - 10.0).abs() < 1e-4);
     }
@@ -346,9 +350,9 @@ mod tests {
         let rx1 = tx.subscribe();
         let comms0 = SimComms::new(tx.clone(), rx0);
         let comms1 = SimComms::new(tx.clone(), rx1);
-        let mut runner0 = AgentRunner::new(comms0, map.clone(), 0);
+        let mut runner0 = AgentRunner::new(comms0, map.clone(), 0, &GbpConfig::default());
         runner0.set_single_edge_trajectory(EdgeId(0), 5.0);
-        let mut runner1 = AgentRunner::new(comms1, map.clone(), 1);
+        let mut runner1 = AgentRunner::new(comms1, map.clone(), 1, &GbpConfig::default());
         runner1.set_single_edge_trajectory(EdgeId(0), 5.0);
 
         // Robot 1 broadcasts its state so robot 0 can see it (within IR_ACTIVATION_RANGE=3.0m)
@@ -366,9 +370,9 @@ mod tests {
         let rx1 = tx.subscribe();
         let comms0 = SimComms::new(tx.clone(), rx0);
         let comms1 = SimComms::new(tx.clone(), rx1);
-        let mut runner0 = AgentRunner::new(comms0, map.clone(), 0);
+        let mut runner0 = AgentRunner::new(comms0, map.clone(), 0, &GbpConfig::default());
         runner0.set_single_edge_trajectory(EdgeId(0), 5.0);
-        let mut runner1 = AgentRunner::new(comms1, map.clone(), 1);
+        let mut runner1 = AgentRunner::new(comms1, map.clone(), 1, &GbpConfig::default());
         runner1.set_single_edge_trajectory(EdgeId(0), 5.0);
         runner1.broadcast_state(EdgeId(0), 3.5, [3.5, 0.0, 0.0]);
         // Steps with GBP iterate — should not panic

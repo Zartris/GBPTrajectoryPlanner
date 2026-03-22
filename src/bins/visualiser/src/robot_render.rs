@@ -2,15 +2,15 @@
 use bevy::prelude::*;
 use gbp_map::map::{Map, EdgeId};
 use gbp_map::MAX_HORIZON;
-use crate::state::{MapRes, RobotState, RobotStates, WsInbox};
+use crate::state::{DrawConfig, MapRes, RobotState, RobotStates, WsInbox};
+use crate::ui::SimPaused;
 use tracing::warn;
 
 pub struct RobotRenderPlugin;
 
 impl Plugin for RobotRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_robot_arrows)
-           .add_systems(Update, (drain_ws_inbox, update_robot_transforms, draw_planned_path, draw_belief_tubes, draw_factor_links).chain());
+        app.add_systems(Update, (drain_ws_inbox, spawn_new_robot_meshes, update_robot_transforms, draw_planned_path, draw_belief_tubes, draw_factor_links).chain());
     }
 }
 
@@ -137,36 +137,43 @@ const CHASSIS_LENGTH: f32 = 1.15; // front to rear (m)
 const CHASSIS_WIDTH: f32 = 0.90;  // left to right (m)
 const CHASSIS_HEIGHT: f32 = 0.126; // top to bottom (m)
 
-fn spawn_robot_arrows(
+
+fn spawn_new_robot_meshes(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    states: Res<RobotStates>,
+    query: Query<&RobotArrow>,
+    draw: Res<DrawConfig>,
 ) {
-    // Spawn chassis box for robot 0 and robot 1
-    for robot_id in 0..2u32 {
-        let (r, g, b) = ROBOT_COLORS.get(robot_id as usize).copied().unwrap_or((0.5, 0.5, 0.5));
-        // Cuboid: half-extents. Length along Z (travel dir before rotation), width along X, height along Y
-        let chassis = meshes.add(Cuboid::new(CHASSIS_WIDTH, CHASSIS_HEIGHT, CHASSIS_LENGTH));
-        let mat = materials.add(StandardMaterial {
-            base_color: Color::srgb(r, g, b),
-            emissive: bevy::color::LinearRgba::new(r * 0.3, g * 0.3, b * 0.3, 1.0),
-            ..default()
-        });
+    if !draw.robots { return; }
+    let existing: std::collections::HashSet<u32> = query.iter().map(|a| a.robot_id).collect();
+
+    for &id in states.0.keys() {
+        if existing.contains(&id) { continue; }
+        let (r, g, b) = ROBOT_COLORS.get(id as usize % ROBOT_COLORS.len())
+            .copied().unwrap_or((0.5, 0.5, 0.5));
         commands.spawn((
-            Mesh3d(chassis),
-            MeshMaterial3d(mat),
+            Mesh3d(meshes.add(Cuboid::new(CHASSIS_WIDTH, CHASSIS_HEIGHT, CHASSIS_LENGTH))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(r, g, b),
+                emissive: bevy::color::LinearRgba::new(r * 0.3, g * 0.3, b * 0.3, 1.0),
+                ..default()
+            })),
             Transform::IDENTITY,
-            RobotArrow { robot_id },
+            RobotArrow { robot_id: id },
         ));
     }
 }
 
-/// Drain WsInbox and update RobotStates each frame.
+/// Drain WsInbox and update RobotStates each frame. Skipped when paused.
 fn drain_ws_inbox(
     inbox: Res<WsInbox>,
     mut states: ResMut<RobotStates>,
     mut backend: ResMut<crate::ui::BackendStats>,
+    paused: Res<SimPaused>,
 ) {
+    if paused.0 { return; }
     let mut q = inbox.0.lock().unwrap_or_else(|e| e.into_inner());
     while let Some(msg) = q.pop_front() {
         backend.record_message();
@@ -201,8 +208,10 @@ fn update_robot_transforms(
 fn draw_planned_path(
     map: Res<MapRes>,
     states: Res<RobotStates>,
+    draw: Res<DrawConfig>,
     mut gizmos: Gizmos,
 ) {
+    if !draw.planned_paths { return; }
     let color = Color::srgb(0.1, 1.0, 0.3);
     let up = Vec3::new(0.0, 0.08, 0.0); // slight vertical offset above edge lines
 
@@ -234,8 +243,10 @@ fn draw_planned_path(
 fn draw_belief_tubes(
     map: Res<MapRes>,
     states: Res<RobotStates>,
+    draw: Res<DrawConfig>,
     mut gizmos: Gizmos,
 ) {
+    if !draw.belief_tubes { return; }
     for (robot_id, state) in &states.0 {
         let (r, g, b) = ROBOT_COLORS.get(*robot_id as usize).copied().unwrap_or((0.5, 0.5, 0.5));
         let edge_ids: Vec<EdgeId> = state.planned_edges.iter().copied().collect();
@@ -270,8 +281,10 @@ fn draw_belief_tubes(
 fn draw_factor_links(
     map: Res<MapRes>,
     states: Res<RobotStates>,
+    draw: Res<DrawConfig>,
     mut gizmos: Gizmos,
 ) {
+    if !draw.factor_links { return; }
     // Collect robots with active factors: their belief positions and active timestep set
     let up = Vec3::new(0.0, 0.15, 0.0);
     let mut robot_data: std::vec::Vec<(u32, std::vec::Vec<Vec3>, std::vec::Vec<u8>)> = std::vec::Vec::new();

@@ -6,7 +6,7 @@ use crate::state::WS_INBOX_CAP;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, SinkExt};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use gbp_comms::RobotStateMsg;
@@ -17,6 +17,7 @@ use tracing::{info, warn, error};
 pub fn spawn_ws_client(
     url: String,
     inbox: Arc<Mutex<VecDeque<RobotStateMsg>>>,
+    outbox: Arc<Mutex<VecDeque<String>>>,
 ) -> Arc<AtomicBool> {
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = Arc::clone(&shutdown);
@@ -33,14 +34,29 @@ pub fn spawn_ws_client(
                 }
                 info!("connecting to {}", url);
                 match connect_async(&url).await {
-                    Ok((mut ws, _)) => {
+                    Ok((ws, _)) => {
                         info!("connected to simulator");
-                        while let Some(msg) = ws.next().await {
-                            if shutdown_clone.load(Ordering::Relaxed) {
-                                break;
+                        let (mut sink, mut stream) = ws.split();
+                        loop {
+                            // Drain outbox into local vec (don't hold mutex across await)
+                            let pending: std::vec::Vec<String> = {
+                                let mut q = outbox.lock().unwrap_or_else(|e| e.into_inner());
+                                q.drain(..).collect()
+                            };
+                            let mut send_failed = false;
+                            for cmd in pending {
+                                if sink.send(Message::Text(cmd.into())).await.is_err() {
+                                    send_failed = true;
+                                    break;
+                                }
                             }
-                            match msg {
-                                Ok(Message::Text(json)) => {
+                            if send_failed { break; } // reconnect
+                            // Receive with 100ms timeout (reduced CPU vs 10ms busy-poll)
+                            match tokio::time::timeout(
+                                tokio::time::Duration::from_millis(100),
+                                stream.next(),
+                            ).await {
+                                Ok(Some(Ok(Message::Text(json)))) => {
                                     match serde_json::from_str::<RobotStateMsg>(&json) {
                                         Ok(state) => {
                                             let mut q = inbox.lock().unwrap_or_else(|e| e.into_inner());
@@ -50,10 +66,12 @@ pub fn spawn_ws_client(
                                         Err(e) => warn!("bad msg: {}", e),
                                     }
                                 }
-                                Ok(Message::Close(_)) => break,
-                                Err(e) => { error!("ws error: {}", e); break; }
+                                Ok(Some(Ok(Message::Close(_)))) | Ok(None) => break,
+                                Ok(Some(Err(e))) => { error!("ws error: {}", e); break; }
+                                Err(_) => {} // timeout — loop back to check outbox
                                 _ => {}
                             }
+                            if shutdown_clone.load(Ordering::Relaxed) { break; }
                         }
                         if shutdown_clone.load(Ordering::Relaxed) {
                             break;

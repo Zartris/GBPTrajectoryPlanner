@@ -71,7 +71,7 @@ struct YamlSafety { clearance: f64 }
 
 // -- Public API --
 
-pub fn parse_yaml(yaml: &str) -> Result<Map, String> {
+pub fn parse_yaml(yaml: &str) -> Result<(Map, std::collections::HashMap<String, NodeId>), String> {
     let raw: YamlMap = serde_yaml::from_str(yaml)
         .map_err(|e| std::format!("YAML parse error: {e}"))?;
 
@@ -154,5 +154,9 @@ pub fn parse_yaml(yaml: &str) -> Result<Map, String> {
         }).map_err(|_| std::string::String::from("map edge capacity exceeded"))?;
     }
 
-    Ok(map)
+    let name_lookup: std::collections::HashMap<String, NodeId> = node_id_map
+        .into_iter()
+        .map(|(name, id)| (name, NodeId(id)))
+        .collect();
+    Ok((map, name_lookup))
 }

@@ -7,6 +7,7 @@ services:
         USERNAME: ${USER}
         USER_UID: ${UID:-1000}
         USER_GID: ${GID:-1000}
+        RENDER_GID: ${RENDER_GID:-992}
     image: gbptrajectoryplanner
     container_name: gbptrajectoryplanner-sandbox
     volumes:
@@ -28,6 +29,12 @@ services:
       - ${HOME}/.gitconfig:/home/${USER}/.gitconfig:ro
       # gh CLI auth — auth once on host with `gh auth login`, persists across rebuilds
       - ${HOME}/.config/gh:/home/${USER}/.config/gh
+      # WSL2 GPU stack — exposes d3d12/dxcore/drivers so dzn Vulkan driver works
+      - /usr/lib/wsl:/usr/lib/wsl:ro
+      # DRI render nodes for Mesa/DRM GPU path (AMD/Intel/llvmpipe fallback)
+      - /dev/dri:/dev/dri
+      # WSL2 GPU virtualisation device — required for d3d12/Vulkan via dxg
+      - /dev/dxg:/dev/dxg
       # X11 forwarding — lets Bevy/visualiser open a window on the host display
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       # Wayland socket — WSLg exposes this; faster than X11 forwarding
@@ -39,6 +46,18 @@ services:
       # NVIDIA GPU passthrough (requires nvidia-container-toolkit on host)
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
+      # WSL2 GPU libs must be on the linker path so wgpu/Vulkan finds libdxcore etc.
+      - LD_LIBRARY_PATH=/usr/lib/wsl/lib
+      # WSL2 GPU via dzn (D3D12-over-Vulkan) is available but currently slower
+      # than llvmpipe for this visualiser due to translation overhead.
+      # To try GPU: set WGPU_ADAPTER_NAME=NVIDIA (also needs the 3 lines below).
+      #- GALLIUM_DRIVER=d3d12
+      #- MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA
+      #- WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER=1
+      #- VK_LOADER_LAYERS_DISABLE=*validation*
+      # Use CPU renderer — faster than dzn for lightweight visualiser workloads
+      - WGPU_ADAPTER_NAME=llvmpipe
+    runtime: nvidia
     deploy:
       resources:
         reservations:

@@ -1,0 +1,13 @@
+# Endcollision scenario: two robots on the same route, staggered start positions.
+# Robot 0 starts at P025, robot 1 at P024 (predecessor of P025).
+[scenario]
+name = "endcollision_v2"
+map = "maps/test_loop_map.yaml"
+
+[[robots]]
+start = "P032"
+goal = "P002"
+
+[[robots]]
+start = "P001"
+goal = "P002"

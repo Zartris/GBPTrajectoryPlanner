@@ -24,6 +24,7 @@ pub struct InterRobotFactor {
     var_idx_a:   usize,
     d_safe:      f32,
     sigma_r:     f32,
+    pub decay_alpha: f32,
     active:      bool,
     /// Scalar Jacobians (set by agent each step)
     pub jacobian_a: f32,
@@ -36,9 +37,9 @@ pub struct InterRobotFactor {
 }
 
 impl InterRobotFactor {
-    pub fn new(var_idx_a: usize, d_safe: f32, sigma_r: f32) -> Self {
+    pub fn new(var_idx_a: usize, d_safe: f32, sigma_r: f32, decay_alpha: f32) -> Self {
         Self {
-            var_idx_a, d_safe, sigma_r,
+            var_idx_a, d_safe, sigma_r, decay_alpha,
             active: true,
             jacobian_a: 0.0, jacobian_b: 0.0,
             ext_eta_b: 0.0, ext_lambda_b: 1.0,
@@ -57,7 +58,7 @@ impl Factor for InterRobotFactor {
     fn variable_indices(&self) -> &[usize] { core::slice::from_ref(&self.var_idx_a) }
     fn is_active(&self) -> bool { self.active }
 
-    fn linearize(&self, _variables: &[VariableNode]) -> LinearizedFactor {
+    fn linearize(&self, variables: &[VariableNode]) -> LinearizedFactor {
         // Exponential decay precision — smooth everywhere, no discontinuities.
         //
         //   dist <= d_safe  → full precision (collision zone)
@@ -65,25 +66,42 @@ impl Factor for InterRobotFactor {
         //
         // alpha controls the decay rate. Higher alpha = faster decay = less influence at distance.
         // With alpha=3.0 and d_safe=1.3: at 2*d_safe (2.6m) precision is ~2% of full.
-        const DECAY_ALPHA: f32 = 3.0;
+        let decay_alpha = self.decay_alpha;
 
-        let residual = self.d_safe - self.dist;
+        // Residual: dist - d_safe (positive when safe, negative when too close).
+        // Sign convention matches pairwise factors where r = h(x) - z, so the
+        // factor_graph formula jx - r = jx - (dist - d_safe) = jx - dist + d_safe
+        // pushes variables apart when dist < d_safe.
+        let residual = self.dist - self.d_safe;
         let sigma_r = f32::max(self.sigma_r, 1e-6);
         let full_prec = 1.0 / (sigma_r * sigma_r);
 
         let prec = if self.dist <= self.d_safe {
             full_prec
         } else {
-            let decay = libm::expf(-DECAY_ALPHA * (self.dist - self.d_safe));
+            let decay = libm::expf(-decay_alpha * (self.dist - self.d_safe));
             full_prec * decay
+        };
+
+        // Linearization point: variable A from graph, variable B from external belief
+        let x_a = variables[self.var_idx_a].mean();
+        let x_b = if self.ext_lambda_b > 1e-10 {
+            self.ext_eta_b / self.ext_lambda_b
+        } else {
+            0.0
         };
 
         // Joint information matrix (2x2, pairwise between A and B)
         let xi_aa = prec * self.jacobian_a * self.jacobian_a;
         let xi_ab = prec * self.jacobian_a * self.jacobian_b;
         let xi_bb = prec * self.jacobian_b * self.jacobian_b;
-        let zeta_a = prec * residual * self.jacobian_a;
-        let zeta_b = prec * residual * self.jacobian_b;
+
+        // Information vector: η = J^T * Λ * (J*x - r)
+        // This includes the linearization point J*x, matching the pairwise formula
+        // in factor_graph.rs. Without this, the factor's push has wrong magnitude.
+        let jx = self.jacobian_a * x_a + self.jacobian_b * x_b;
+        let zeta_a = prec * self.jacobian_a * (jx - residual);
+        let zeta_b = prec * self.jacobian_b * (jx - residual);
 
         // Marginalize out B using Schur complement with B's external cavity belief
         let lambda_b_eff = xi_bb + self.ext_lambda_b;

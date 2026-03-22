@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use gbp_comms::RobotBroadcast;
+use gbp_core::GbpConfig;
 use gbp_map::map::*;
 use simulator::agent_runner::AgentRunner;
 use simulator::physics::PhysicsState;
@@ -36,12 +37,12 @@ fn robot_b_maintains_d_safe_clearance_from_robot_a() {
     let (tx, rx0) = broadcast::channel::<RobotBroadcast>(64);
     let rx1 = tx.subscribe();
 
-    let mut runner_a = AgentRunner::new(SimComms::new(tx.clone(), rx0), map.clone(), 0);
+    let mut runner_a = AgentRunner::new(SimComms::new(tx.clone(), rx0), map.clone(), 0, &GbpConfig::default());
     runner_a.set_single_edge_trajectory(EdgeId(0), 10.0);
     let mut phys_a = PhysicsState::new(10.0);
     phys_a.position_s = 2.0;
 
-    let mut runner_b = AgentRunner::new(SimComms::new(tx.clone(), rx1), map.clone(), 1);
+    let mut runner_b = AgentRunner::new(SimComms::new(tx.clone(), rx1), map.clone(), 1, &GbpConfig::default());
     runner_b.set_single_edge_trajectory(EdgeId(0), 10.0);
     let mut phys_b = PhysicsState::new(10.0);
     phys_b.position_s = 0.0;

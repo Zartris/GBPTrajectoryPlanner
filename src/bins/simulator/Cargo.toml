@@ -14,8 +14,10 @@ path = "src/main.rs"
 [dependencies]
 gbp-agent  = { path = "../../../crates/gbp-agent" }
 gbp-comms  = { path = "../../../crates/gbp-comms", features = ["serde"] }
+gbp-core   = { path = "../../../crates/gbp-core" }
 gbp-map    = { path = "../../../crates/gbp-map", features = ["parse"] }
 heapless   = { workspace = true }
+serde      = { workspace = true }
 tokio      = { workspace = true }
 axum       = { workspace = true }
 serde_json = { workspace = true }
@@ -23,3 +25,4 @@ futures-util = { workspace = true }
 tracing    = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap               = { version = "4", features = ["derive"] }
+toml               = { workspace = true }

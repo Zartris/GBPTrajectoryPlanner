@@ -26,17 +26,30 @@ docker exec -it gbptrajectoryplanner-sandbox bash
 ### Running
 
 ```bash
-# Terminal 1: Start the simulator (one robot on the test loop map)
-cargo run -p simulator -- --map maps/test_loop_map.yaml
+# Terminal 1: Start the simulator with a scenario
+cargo run -p simulator -- --config config/config.toml --scenario config/scenarios/fleet_4.toml
 
 # Terminal 2: Start the visualiser (Bevy 3D window)
 DISPLAY=:0 cargo run -p visualiser
+
+# Optional: If you have trouble with wayland vs X11, try forcing X11:
+WAYLAND_DISPLAY= DISPLAY=:0 cargo run -p visualiser
 ```
+
+Available scenarios:
+- `config/scenarios/fleet_4.toml` — 4 robots, auto-assigned distributed starts and random goals
+- `config/scenarios/merge.toml` — 2 robots from different entry points converging on the same goal
+- `config/scenarios/endcollision.toml` — 2 robots on the same route, staggered start positions
+
+The `--config` flag is optional — omitting it uses built-in defaults.
 
 You should see a 3D window with:
 - Yellow lines showing the track edges
 - Colored spheres at map nodes (grey=waypoint, green=merge, blue=divert, yellow=charger)
-- A glowing blue cone (robot) sliding along an edge
+- Environment STL meshes (physical track, magnetic lines)
+- Coloured cuboid robots moving along their planned trajectories
+- Per-robot HUD panels showing velocity, edge position, and inter-robot distance
+- A control panel with pause/resume (pauses the actual simulation)
 
 ### Running Tests
 
@@ -100,19 +113,37 @@ All four core crates compile for `riscv32imac-unknown-none-elf` (ESP32-C5) witho
 
 ```
 crates/
-  gbp-core/     -- Factor trait, FactorGraph, DynamicsFactor, InterRobotFactor
+  gbp-core/     -- Factor trait, FactorGraph, GbpConfig, DynamicsFactor, InterRobotFactor
   gbp-agent/    -- RobotAgent, trajectory tracking, inter-robot factor lifecycle
   gbp-comms/    -- All message types, CommsInterface trait
   gbp-map/      -- Map, Node, Edge, NURBS eval, arc-length table, A*
 src/bins/
   simulator/    -- Tokio + axum, all agents in-process
   visualiser/   -- Bevy 0.18 + bevy_egui 0.39
-firmware/       -- ESP32-C5 firmware (separate Cargo workspace)
-maps/           -- YAML map files
-docs/           -- Design docs and implementation plans
-scripts/        -- Setup and flashing scripts
-docker/         -- Dev container configuration
+config/
+  config.toml          -- GBP solver, factor weights, velocity limits, draw toggles
+  scenarios/           -- Per-run scenario files (map + robot assignments)
+firmware/              -- ESP32-C5 firmware (separate Cargo workspace)
+maps/                  -- YAML map files
+assets/models/         -- STL meshes (track, mainlines, markers, chassis)
+docs/                  -- Design docs and implementation plans
+scripts/               -- Setup and flashing scripts
+docker/                -- Dev container configuration
 ```
+
+## Configuration
+
+All GBP tuning parameters, robot physical constraints, and visualisation toggles are in `config/config.toml`. The file is heavily commented — each section explains what every parameter does and how it affects behaviour.
+
+Key sections:
+- `[gbp]` — solver parameters (damping, iteration counts, timestep)
+- `[gbp.dynamics]` — dynamics factor noise (velocity smoothing strength)
+- `[gbp.interrobot]` — collision avoidance (safe distance, activation range, decay)
+- `[gbp.velocity_bound]` — BIPM-inspired soft velocity limits
+- `[robot]` — post-GBP physical constraints (accel, jerk, speed limits)
+- `[visualisation.draw]` — toggle individual rendering elements on/off
+
+Scenarios are separate TOML files in `config/scenarios/`. Each defines the map and robot start/goal assignments (by node name) or auto-assignment for fleet mode.
 
 ## Firmware (ESP32-C5)
 

@@ -50,7 +50,7 @@ fn dynamics_factor_jacobian_shape() {
 
 #[test]
 fn interrobot_factor_precision_matrix_symmetric() {
-    let f = InterRobotFactor::new(0, 0.3, 0.5);
+    let f = InterRobotFactor::new(0, 0.3, 0.5, 3.0);
     let mut f2 = f;
     f2.jacobian_a = 0.8;
     f2.jacobian_b = -0.6;

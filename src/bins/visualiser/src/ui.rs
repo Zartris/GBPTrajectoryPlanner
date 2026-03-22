@@ -2,11 +2,12 @@
 use bevy::prelude::*;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
-use crate::state::RobotStates;
+use crate::state::{RobotStates, WsOutbox};
 
 /// Shared pause flag.
 #[derive(Resource, Default)]
 pub struct SimPaused(pub bool);
+
 
 /// Tracks backend message rate by counting messages per second.
 #[derive(Resource)]
@@ -63,6 +64,7 @@ fn draw_hud(
     mut paused: ResMut<SimPaused>,
     diagnostics: Res<DiagnosticsStore>,
     backend: Res<BackendStats>,
+    outbox: Res<WsOutbox>,
 ) -> Result {
     let ctx = ctxs.ctx_mut()?;
 
@@ -91,7 +93,11 @@ fn draw_hud(
         let label = if paused.0 { "Resume" } else { "Pause" };
         if ui.button(label).clicked() {
             paused.0 = !paused.0;
+            let cmd = if paused.0 { r#"{"command":"pause"}"# } else { r#"{"command":"resume"}"# };
+            outbox.0.lock().unwrap_or_else(|e| e.into_inner()).push_back(cmd.to_string());
         }
+        ui.separator();
+        ui.label(format!("Connected: {} robots", states.0.len()));
     });
 
     // Per-robot side panels

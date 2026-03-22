@@ -1,5 +1,5 @@
 use gbp_comms::{CommsInterface, ObservationUpdate, RobotBroadcast, RobotId};
-use gbp_core::{Factor, FactorGraph, FactorKind, DynamicsFactor, InterRobotFactor, VelocityBoundFactor};
+use gbp_core::{FactorGraph, FactorKind, DynamicsFactor, InterRobotFactor, VelocityBoundFactor, GbpConfig};
 use gbp_map::{Map, MAX_HORIZON, MAX_NEIGHBOURS};
 use gbp_map::map::EdgeId;
 use heapless::Vec;
@@ -16,15 +16,6 @@ const NUM_VEL_BOUND_FACTORS: usize = MAX_HORIZON - 1;
 /// Max total factors = dynamics + velocity bound + inter-robot
 const MAX_FACTORS: usize = NUM_DYN_FACTORS + NUM_VEL_BOUND_FACTORS + MAX_IR_FACTORS;
 
-/// Internal iterations (dynamics + velocity bound) per external iteration (inter-robot).
-const GBP_INTERNAL_ITERS: usize = 3;
-/// External iterations (inter-robot factors). Total iterations = (INTERNAL+1) * EXTERNAL.
-const GBP_EXTERNAL_ITERS: usize = 5;
-const DT: f32 = 0.1; // seconds per GBP timestep
-const D_SAFE: f32 = 1.3; // minimum center-to-center clearance (m) — chassis 1.15m + 0.15m margin
-const SIGMA_R: f32 = 0.12; // inter-robot factor noise (precision ≈ 69 vs dynamics precision = 4)
-const IR_RAMP_START: f32 = 2.6; // 2× d_safe — distance where IR factor starts ramping up
-const IR_ACTIVATION_RANGE: f32 = 3.0; // distance where IR factors are spawned/despawned
 const AGENT_DT: f32 = 0.02; // 50 Hz agent tick
 
 /// Output of one agent step.
@@ -60,6 +51,8 @@ pub struct RobotAgent<C: CommsInterface> {
     last_broadcasts: Vec<RobotBroadcast, MAX_NEIGHBOURS>,
     /// Maximum allowed position (from safety cap). f32::MAX if unconstrained.
     last_max_position: f32,
+    /// GBP configuration parameters.
+    config: GbpConfig,
 }
 
 // SAFETY: Map pointer is valid for the lifetime of the agent.
@@ -67,14 +60,14 @@ pub struct RobotAgent<C: CommsInterface> {
 unsafe impl<C: CommsInterface + Send> Send for RobotAgent<C> {}
 
 impl<C: CommsInterface> RobotAgent<C> {
-    pub fn new(comms: C, map: &Map, robot_id: RobotId) -> Self {
-        let mut graph: FactorGraph<MAX_HORIZON, MAX_FACTORS> = FactorGraph::new(0.0, 100.0);
+    pub fn new(comms: C, map: &Map, robot_id: RobotId, config: &GbpConfig) -> Self {
+        let mut graph: FactorGraph<MAX_HORIZON, MAX_FACTORS> = FactorGraph::new(0.0, config.init_variance, config.msg_damping);
         let mut dyn_indices = [0usize; NUM_DYN_FACTORS];
 
         // Add K-1 permanent dynamics factors
         for k in 0..NUM_DYN_FACTORS {
             let idx = graph.add_factor(FactorKind::Dynamics(
-                DynamicsFactor::new([k, k + 1], DT, 0.5, 0.0)
+                DynamicsFactor::new([k, k + 1], config.gbp_timestep, config.sigma_dynamics, 0.0)
             )).expect("BUG: MAX_FACTORS < K+1 dynamics factors — check capacity constants");
             dyn_indices[k] = idx;
         }
@@ -82,7 +75,7 @@ impl<C: CommsInterface> RobotAgent<C> {
         let mut vel_bound_indices = [0usize; NUM_VEL_BOUND_FACTORS];
         for k in 0..NUM_VEL_BOUND_FACTORS {
             let idx = graph.add_factor(FactorKind::VelocityBound(
-                VelocityBoundFactor::new([k, k + 1], DT, 2.5)
+                VelocityBoundFactor::new([k, k + 1], config.gbp_timestep, config.v_max_default, config.v_min, config.vb_kappa, config.vb_margin, config.vb_max_precision)
             )).expect("BUG: MAX_FACTORS too small for velocity bound factors");
             vel_bound_indices[k] = idx;
         }
@@ -99,9 +92,10 @@ impl<C: CommsInterface> RobotAgent<C> {
             position_s: 0.0,
             current_edge: EdgeId(0),
             pos_3d: [0.0; 3],
-            constraints: DynamicConstraints::new(2.5, 5.0, 2.5),
+            constraints: DynamicConstraints::new(config.max_accel, config.max_jerk, config.max_speed, config.v_min),
             last_broadcasts: Vec::new(),
             last_max_position: f32::MAX,
+            config: *config,
         }
     }
 
@@ -113,6 +107,14 @@ impl<C: CommsInterface> RobotAgent<C> {
     /// Mutable access to comms (for broadcast_state in AgentRunner).
     pub fn comms_mut(&mut self) -> &mut C {
         &mut self.comms
+    }
+
+    /// Whether the robot has reached the end of its trajectory.
+    fn at_goal(&self) -> bool {
+        match &self.trajectory {
+            Some(t) => self.position_s >= t.total_length() - 0.01,
+            None => false,
+        }
     }
 
     /// Number of currently active inter-robot factors.
@@ -213,10 +215,10 @@ impl<C: CommsInterface> RobotAgent<C> {
         // 0. Anchor variable[0] at observed position (strong prior).
         // Set both prior AND current eta/lambda so variables[0].mean() returns
         // the correct position_s immediately (used by update_dynamics_v_nom at step 3).
-        self.graph.variables[0].prior_eta = self.position_s * 1000.0;
-        self.graph.variables[0].prior_lambda = 1000.0;
-        self.graph.variables[0].eta = self.position_s * 1000.0;
-        self.graph.variables[0].lambda = 1000.0;
+        self.graph.variables[0].prior_eta = self.position_s * self.config.anchor_precision;
+        self.graph.variables[0].prior_lambda = self.config.anchor_precision;
+        self.graph.variables[0].eta = self.position_s * self.config.anchor_precision;
+        self.graph.variables[0].lambda = self.config.anchor_precision;
 
         // 1. Receive broadcasts from neighbours. If none arrived this tick,
         // use the cached version so IR factors don't flicker on/off.
@@ -228,6 +230,8 @@ impl<C: CommsInterface> RobotAgent<C> {
 
         // 2. Update inter-robot factors (add/remove as planned edges change)
         self.update_interrobot_factors(&broadcasts, map);
+        // Re-accumulate beliefs to clear stale messages from any removed factors
+        self.graph.reaccumulate_beliefs();
 
         // 3. Update v_nom on dynamics factors from current trajectory
         self.update_dynamics_v_nom(map);
@@ -236,13 +240,13 @@ impl<C: CommsInterface> RobotAgent<C> {
         self.update_interrobot_jacobians(&broadcasts, map);
 
         // 5. Run GBP
-        self.graph.iterate_split(GBP_INTERNAL_ITERS, GBP_EXTERNAL_ITERS);
+        self.graph.iterate_split(self.config.internal_iters as usize, self.config.external_iters as usize);
 
         // 6. Extract commanded velocity from GBP
         let s0 = self.graph.variables[0].mean();
         let s1 = self.graph.variables[1].mean();
         // Allow negative velocity (creep-back) — VelocityBoundFactor bounds at v_min=-0.3
-        let raw_velocity = (s1 - s0) / DT;
+        let raw_velocity = (s1 - s0) / self.config.gbp_timestep;
 
         // 7. Post-GBP dynamic constraints (NOT part of factor graph).
         // Smooths the raw GBP velocity through jerk, accel, and speed limits.
@@ -305,6 +309,17 @@ impl<C: CommsInterface> RobotAgent<C> {
 
     fn update_dynamics_v_nom(&mut self, map: &Map) {
         let traj = match &self.trajectory { Some(t) => t, None => return };
+
+        // At goal: target velocity = 0. Robot stays put.
+        if self.at_goal() {
+            for &dyn_idx in self.dyn_indices.iter() {
+                if let Some(FactorKind::Dynamics(df)) = self.graph.get_factor_kind_mut(dyn_idx) {
+                    df.set_v_nom(0.0);
+                }
+            }
+            return;
+        }
+
         let edge = map.edges.iter().find(|e| e.id == self.current_edge);
         let (nominal, decel) = edge.map(|e| (e.speed.nominal, e.speed.decel_limit))
             .unwrap_or((1.0, 1.0));
@@ -347,7 +362,7 @@ impl<C: CommsInterface> RobotAgent<C> {
             }
 
             let _ = active_ids.push(bcast.robot_id);
-            let activation_range = IR_ACTIVATION_RANGE;
+            let activation_range = self.config.ir_activation_range;
 
             // For each variable k (skip k=0 — anchor prior is too strong, factor would
             // have no effect), check if predicted positions are close enough in 3D.
@@ -393,7 +408,7 @@ impl<C: CommsInterface> RobotAgent<C> {
                 if dist < activation_range {
                     // Add factor at this timestep if we don't have one already
                     if !self.ir_set.contains(bcast.robot_id, k) {
-                        let factor = InterRobotFactor::new(k, D_SAFE, SIGMA_R);
+                        let factor = InterRobotFactor::new(k, self.config.d_safe, self.config.sigma_interrobot, self.config.ir_decay_alpha);
                         if let Ok(idx) = self.graph.add_factor(FactorKind::InterRobot(factor)) {
                             if !self.ir_set.insert(bcast.robot_id, k, idx) {
                                 // IR set full — remove orphaned factor
@@ -427,10 +442,7 @@ impl<C: CommsInterface> RobotAgent<C> {
         broadcasts: &Vec<RobotBroadcast, MAX_NEIGHBOURS>,
         map: &Map,
     ) {
-        /// Front robot gets a dampened push — yielding matters more than fleeing.
-        /// 1.0 = full push (no dampening), 0.0 = no push at all.
-        const FRONT_DAMPING: f32 = 0.3;
-
+        let am_at_goal = self.at_goal();
         for bcast in broadcasts.iter() {
             if bcast.robot_id == self.robot_id { continue; }
 
@@ -521,9 +533,13 @@ impl<C: CommsInterface> RobotAgent<C> {
                     let mut jac_a = dot_a / dist_3d;
                     let jac_b = -dot_b / dist_3d;
 
-                    // Asymmetric dampening: front robot gets gentler push
-                    if jac_a > 0.0 {
-                        jac_a *= FRONT_DAMPING;
+                    // At goal: zero our Jacobian so IR only affects the other robot.
+                    // The goal robot has nowhere to go — it must stay put.
+                    if am_at_goal {
+                        jac_a = 0.0;
+                    } else if jac_a > 0.0 {
+                        // Asymmetric dampening: front robot gets gentler push
+                        jac_a *= self.config.front_damping;
                     }
 
                     irf.jacobian_a = jac_a;
@@ -539,7 +555,7 @@ impl<C: CommsInterface> RobotAgent<C> {
                     }
 
                     // Activate factor only when robots are within activation range (3D)
-                    irf.set_active(dist_3d < IR_ACTIVATION_RANGE);
+                    irf.set_active(dist_3d < self.config.ir_activation_range);
                 }
             }
         }
@@ -554,13 +570,32 @@ impl<C: CommsInterface> RobotAgent<C> {
     }
 
     fn make_broadcast(&self, velocity: f32) -> RobotBroadcast {
-        // Broadcast MARGINAL beliefs (standard in distributed GBP).
-        // Circular evidence exists but is accepted — message damping stabilises it.
+        // Broadcast CAVITY beliefs: marginal minus IR factor contributions.
+        // This prevents circular evidence — robot A's IR push is NOT baked
+        // into the beliefs that robot B reads back, avoiding positive feedback.
         let mut means: Vec<f32, MAX_HORIZON> = Vec::new();
         let mut vars: Vec<f32, MAX_HORIZON> = Vec::new();
-        for v in &self.graph.variables {
-            let _ = means.push(v.mean());
-            let _ = vars.push(v.variance().min(1e6));
+        for (k, v) in self.graph.variables.iter().enumerate() {
+            // Subtract all IR factor messages connected to variable k
+            let mut cav_eta = v.eta;
+            let mut cav_lambda = v.lambda;
+            for &(_rid, var_k, factor_idx) in self.ir_set.iter() {
+                if var_k == k {
+                    if let Some(fnode) = self.graph.factor_node(factor_idx) {
+                        cav_eta -= fnode.msg_eta[0];
+                        cav_lambda -= fnode.msg_lambda[0];
+                    }
+                }
+            }
+            // If cavity lambda is invalid (IR message overwhelmed the marginal),
+            // fall back to full marginal to avoid injecting garbage beliefs.
+            if cav_lambda > 1e-6 {
+                let _ = means.push(cav_eta / cav_lambda);
+                let _ = vars.push((1.0 / cav_lambda).min(1e6));
+            } else {
+                let _ = means.push(v.mean());
+                let _ = vars.push(v.variance().min(1e6));
+            }
         }
         RobotBroadcast {
             robot_id: self.robot_id,

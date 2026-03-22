@@ -1,5 +1,6 @@
 use gbp_agent::RobotAgent;
 use gbp_comms::{ObservationUpdate, RobotBroadcast};
+use gbp_core::GbpConfig;
 use gbp_map::map::{EdgeId, Map, Node, NodeId, NodeType, Edge, EdgeGeometry, SpeedProfile, SafetyProfile};
 use heapless::Vec;
 
@@ -26,7 +27,7 @@ fn one_edge_map() -> Map {
 #[test]
 fn step_produces_nonzero_velocity_when_trajectory_set() {
     let map = one_edge_map();
-    let mut agent = RobotAgent::new(NullComms, &map, 0);
+    let mut agent = RobotAgent::new(NullComms, &map, 0, &GbpConfig::default());
     let mut edges: Vec<(EdgeId, f32), 32> = Vec::new();
     edges.push((EdgeId(0), 10.0)).unwrap();
     agent.set_trajectory(edges, 0.0);

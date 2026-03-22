@@ -1,14 +1,27 @@
 // src/bins/visualiser/src/map_scene.rs
 use bevy::prelude::*;
 use bevy::gizmos::config::{GizmoConfigStore, DefaultGizmoConfigGroup, GizmoLineConfig};
-use gbp_map::map::{EdgeGeometry, NodeType};
-use crate::state::MapRes;
+use gbp_map::map::{EdgeGeometry, EdgeId, NodeType};
+use crate::state::{DrawConfig, MapRes};
+
+/// Cached polylines for each edge — computed once at startup, drawn every frame.
+#[derive(Resource)]
+pub struct EdgePolylines {
+    pub lines: std::vec::Vec<(EdgeId, std::vec::Vec<Vec3>)>,
+}
+
+const PHYSICAL_TRACK_STL: &str = "models/physical_track.stl";
+const MAGNETIC_MAINLINES_STL: &str = "models/magnetic_mainlines.stl";
+const MAGNETIC_MARKERS_STL: &str = "models/magnetic_markers.stl";
+
+/// STL models are authored in millimeters; map coordinates are in meters.
+const STL_SCALE: f32 = 0.001;
 
 pub struct MapScenePlugin;
 
 impl Plugin for MapScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (spawn_map_scene, configure_gizmos))
+        app.add_systems(Startup, (configure_gizmos, spawn_map_scene, spawn_environment_stl, build_edge_polylines).chain())
            .add_systems(Update, draw_edge_gizmos);
     }
 }
@@ -48,6 +61,7 @@ pub fn midpoint(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 fn spawn_map_scene(
     mut commands: Commands,
     map: Res<MapRes>,
+    draw: Res<DrawConfig>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -84,6 +98,8 @@ fn spawn_map_scene(
             .looking_at(center, Vec3::Y),
     ));
 
+    if !draw.node_spheres { return; }
+
     // Node spheres with emissive glow
     let sphere_mesh = meshes.add(Sphere::new(0.2).mesh().ico(2).unwrap());
 
@@ -104,35 +120,124 @@ fn spawn_map_scene(
     }
 }
 
-/// Number of line segments used to render each NURBS edge.
+/// Number of line segments used to render each edge.
 pub const NURBS_EDGE_SAMPLES: usize = 32;
 
-/// Draw edge gizmo lines each frame (2px wide, bright yellow).
-fn draw_edge_gizmos(
+/// Cache sampled polylines at startup so draw_edge_gizmos doesn't recompute per frame.
+fn build_edge_polylines(
+    mut commands: Commands,
     map: Res<MapRes>,
+) {
+    let mut lines = std::vec::Vec::new();
+    for edge in map.0.edges.iter() {
+        let n = NURBS_EDGE_SAMPLES;
+        let len = edge.geometry.length();
+        let mut pts: std::vec::Vec<Vec3> = std::vec::Vec::with_capacity(n + 1);
+        let mut last_valid = Vec3::ZERO;
+        for i in 0..=n {
+            let s = (i as f32 / n as f32) * len;
+            let p = match map.0.eval_position(edge.id, s) {
+                Some(p) => { let v = map_to_bevy(p); last_valid = v; v }
+                None => last_valid, // reuse last valid point instead of jumping to origin
+            };
+            pts.push(p);
+        }
+        lines.push((edge.id, pts));
+    }
+    commands.insert_resource(EdgePolylines { lines });
+}
+
+/// Draw edge gizmo lines each frame from cached polylines (2px wide, bright yellow).
+fn draw_edge_gizmos(
+    polylines: Option<Res<EdgePolylines>>,
+    map: Res<MapRes>,
+    draw: Res<DrawConfig>,
     mut gizmos: Gizmos,
 ) {
+    if !draw.edge_lines { return; }
     let color = Color::srgb(1.0, 1.0, 0.3);
 
-    for edge in map.0.edges.iter() {
-        match &edge.geometry {
-            EdgeGeometry::Line { start, end, .. } => {
-                gizmos.line(map_to_bevy(*start), map_to_bevy(*end), color);
+    if let Some(cache) = polylines {
+        // Fast path: draw from cache
+        for (_id, pts) in &cache.lines {
+            for pair in pts.windows(2) {
+                gizmos.line(pair[0], pair[1], color);
             }
-            EdgeGeometry::Nurbs(n) => {
-                let mut prev = map_to_bevy(
-                    gbp_map::nurbs::eval_point(0.0, &n.control_points, &n.knots, n.degree as usize)
-                );
-                for i in 1..=NURBS_EDGE_SAMPLES {
-                    let t = i as f32 / NURBS_EDGE_SAMPLES as f32;
-                    let p = gbp_map::nurbs::eval_point(t, &n.control_points, &n.knots, n.degree as usize);
-                    let cur = map_to_bevy(p);
-                    gizmos.line(prev, cur, color);
-                    prev = cur;
+        }
+    } else {
+        // Fallback before cache is built (first frame)
+        for edge in map.0.edges.iter() {
+            match &edge.geometry {
+                EdgeGeometry::Line { start, end, .. } => {
+                    gizmos.line(map_to_bevy(*start), map_to_bevy(*end), color);
+                }
+                EdgeGeometry::Nurbs(n) => {
+                    let mut prev = map_to_bevy(
+                        gbp_map::nurbs::eval_point(0.0, &n.control_points, &n.knots, n.degree as usize)
+                    );
+                    for i in 1..=NURBS_EDGE_SAMPLES {
+                        let t = i as f32 / NURBS_EDGE_SAMPLES as f32;
+                        let p = gbp_map::nurbs::eval_point(t, &n.control_points, &n.knots, n.degree as usize);
+                        let cur = map_to_bevy(p);
+                        gizmos.line(prev, cur, color);
+                        prev = cur;
+                    }
                 }
             }
         }
     }
+}
+
+/// Load and spawn the three environment STL meshes (track, mainlines, markers).
+fn spawn_environment_stl(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    draw: Res<DrawConfig>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // STL models are Z-up (CAD convention), Bevy is Y-up.
+    // Rotate -90° around X to match map_to_bevy: (x, y, z) → (x, z, -y).
+    let stl_transform = Transform {
+        scale: Vec3::splat(STL_SCALE),
+        rotation: Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+        ..default()
+    };
+
+    // Physical track — grey (opaque for performance: 56K tris)
+    if draw.physical_track {
+        commands.spawn((
+            Mesh3d(asset_server.load(PHYSICAL_TRACK_STL)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.45, 0.45, 0.45),
+                ..default()
+            })),
+            stl_transform,
+        ));
+    }
+
+    // Magnetic mainlines — dark blue (opaque for performance: 86K tris)
+    if draw.magnetic_mainlines {
+        commands.spawn((
+            Mesh3d(asset_server.load(MAGNETIC_MAINLINES_STL)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.1, 0.1, 0.7),
+                ..default()
+            })),
+            stl_transform,
+        ));
+    }
+
+    // Magnetic markers — yellow
+    if draw.magnetic_markers {
+    commands.spawn((
+        Mesh3d(asset_server.load(MAGNETIC_MARKERS_STL)),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.8, 0.8, 0.0),
+            ..default()
+        })),
+        stl_transform,
+    ));
+    } // magnetic_markers
 }
 
 #[cfg(test)]
