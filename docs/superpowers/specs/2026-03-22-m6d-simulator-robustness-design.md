@@ -22,6 +22,8 @@ Simulator maintains `Arc<Mutex<heapless::Vec<EdgeId, 16>>>`. When an edge is blo
 2. For each robot currently routing through that edge: trigger A* replan using `astar_filtered` that skips blocked edges
 3. Robots physically ON the blocked edge continue to the edge's end node, then replan from there
 
+**Fallback when goal is unreachable:** If `astar_filtered` returns `None` after blocking (goal unreachable), the robot stops at the nearest node and a warning log is emitted. It re-attempts planning each time an edge is unblocked.
+
 ### Block/Unblock Commands
 WebSocket commands:
 ```json
@@ -40,25 +42,23 @@ WebSocket commands:
 
 Simulator behavior:
 1. Re-read the scenario TOML file from disk
-2. Stop all agent and physics tasks (set a shutdown flag)
+2. Stop all agent and physics tasks via `CancellationToken` (from `tokio_util`). Each task checks `token.is_cancelled()` in its loop and `break`s. Store `JoinHandle`s in a `Vec` to `.await` clean shutdown.
 3. Re-parse map (in case map file changed)
 4. Re-assign start/goals from scenario
-5. Respawn all AgentRunners and PhysicsStates
+5. Respawn all AgentRunners and PhysicsStates with fresh `CancellationToken`
 6. Resume
 
 This is a full reset — all robot state is discarded. Collision count resets to 0.
+
+**New dependency:** `tokio_util` (for `CancellationToken`). The current `AtomicBool` pause flag has no exit path — tasks loop forever. `CancellationToken` provides cooperative shutdown.
 
 ## Map Reload
 
 "Reload Map" button sends `{"command":"reload_map"}`.
 
-Simulator behavior:
-1. Re-read the map YAML from disk
-2. Replace `Arc<Map>` via `Arc::swap` or RwLock
-3. Trigger A* replanning for all robots from their current node
-4. Edge polyline cache in visualiser rebuilt (send a "map_changed" event)
+Simulator behavior: Map reload triggers a **full scenario reload** (same as above). This is because `RobotAgent` stores `map: *const Map` (a raw pointer) — replacing the `Arc<Map>` while agents hold raw pointers would cause use-after-free. The safest approach is to stop all tasks, rebuild everything with the new map, and restart.
 
-Robots mid-edge continue on the old geometry until they reach a node.
+The visualiser receives a `{"type": "map_changed"}` message and rebuilds its edge polyline cache.
 
 ## Despawn at Goal
 
@@ -87,25 +87,41 @@ loop_mode = false
 When `true`, a robot that reaches `at_goal()`:
 1. Picks a new random reachable goal via `pick_random_goal()`
 2. Runs A* from the current goal node to the new goal
-3. Sets the new trajectory on the AgentRunner
-4. Resets PhysicsState (position_s = 0, velocity = 0)
-5. Continues running
+3. Constructs a **fresh `AgentRunner`** with the new trajectory (avoids stale factor graph beliefs, constraints, and IR state from the old trajectory)
+4. Swaps the new runner into the `Arc<Mutex<AgentRunner>>`
+5. Resets PhysicsState (position_s = 0, velocity = 0, new total_length)
+6. Continues running — the agent_task loop picks up the new runner on the next lock
+
+**Why fresh AgentRunner:** Simply calling `set_trajectory()` does NOT clear stale factor graph variable beliefs, `DynamicConstraints` kinematic state (`prev_velocity`, `prev_accel`), or lingering IR factors from the old trajectory. A fresh runner is simpler and less error-prone than a partial reset.
+
+**Goal node tracking:** `AgentRunner` gains a `goal_node: NodeId` field, set during trajectory assignment. Accessor: `current_goal_node() -> NodeId`.
 
 **Priority:** `loop_mode` overrides `despawn_at_goal`. If both true, robot replans (loops) instead of despawning.
 
 **Implementation:** In `agent_task`, after each tick, check `physics.at_goal()`. If true and loop_mode enabled:
 ```rust
-if at_goal && config.loop_mode {
-    let current_goal = runner.current_goal_node();
-    let new_goal = pick_random_goal(&map, current_goal, tick_count);
-    if let Some(path) = astar(&map, current_goal, new_goal) {
-        let traj = build_trajectory_edges(&map, &path);
-        runner.set_trajectory(traj);
-        physics.position_s = 0.0;
-        physics.total_length = traj_total_length;
+if at_goal && sim_config.loop_mode {
+    let current_goal = runner.lock().unwrap().current_goal_node();
+    if let Some(new_goal) = pick_random_goal(&map, current_goal, tick_count) {
+        if let Some(path) = astar(&map, current_goal, new_goal) {
+            let traj = build_trajectory_edges(&map, &path);
+            let total_len = traj.iter().map(|(_, l)| l).sum::<f32>();
+            // Fresh runner with clean factor graph
+            let rx = bcast_tx.subscribe();
+            let comms = SimComms::new(bcast_tx.clone(), rx);
+            let mut new_runner = AgentRunner::new(comms, map.clone(), robot_id, &config);
+            new_runner.set_trajectory(traj);
+            *runner.lock().unwrap() = new_runner;
+            let mut p = physics.lock().unwrap();
+            p.position_s = 0.0;
+            p.velocity = 0.0;
+            p.total_length = total_len;
+        }
     }
 }
 ```
+
+**Performance note:** `pick_random_goal()` runs A* to every node (O(N * A*) per call). Acceptable for small maps; for large maps, pre-compute reachable node pairs as a future optimization.
 
 Both `loop_mode` and `despawn_at_goal` are togglable at runtime from the settings panel.
 
@@ -149,12 +165,15 @@ Added to GbpConfig or a separate SimConfig (since these are simulator-only, not 
 
 | Action | File | Purpose |
 |--------|------|---------|
-| Modify | `crates/gbp-map/src/astar.rs` | Add astar_filtered, refactor astar as wrapper |
-| Modify | `src/bins/simulator/src/main.rs` | BlockedEdges state, reload commands, loop mode, despawn, log messages |
-| Modify | `src/bins/simulator/src/agent_runner.rs` | Goal detection, loop mode replanning, despawn flag |
+| Modify | `crates/gbp-map/src/astar.rs` | Add astar_filtered, refactor astar as wrapper. Note: closure captures happen at simulator call site, not in no_std gbp-map. |
+| Modify | `crates/gbp-agent/src/robot_agent.rs` | Add goal_node field + accessor |
+| Modify | `src/bins/simulator/src/main.rs` | BlockedEdges state, CancellationToken, JoinHandle storage, reload commands, loop mode, despawn, log messages |
+| Modify | `src/bins/simulator/src/agent_runner.rs` | Goal detection, loop mode (fresh AgentRunner swap), despawn flag, goal_node tracking |
+| Modify | `src/bins/simulator/src/physics.rs` | Despawn exit condition, loop mode reset |
 | Create | `src/bins/simulator/src/sim_config.rs` | SimConfig struct (despawn_at_goal, loop_mode) |
 | Modify | `src/bins/simulator/src/toml_config.rs` | Parse [simulation] section |
 | Modify | `src/bins/simulator/src/ws_server.rs` | Handle block/unblock/reload commands, send LogMsg |
+| Modify | `src/bins/simulator/Cargo.toml` | Add tokio_util dependency |
 | Modify | `src/bins/visualiser/src/state.rs` | LogBuffer, LogEntry, BlockedEdgesState |
 | Modify | `src/bins/visualiser/src/ui.rs` | Log panel window |
 | Modify | `src/bins/visualiser/src/map_scene.rs` | Red gizmo color for blocked edges |
