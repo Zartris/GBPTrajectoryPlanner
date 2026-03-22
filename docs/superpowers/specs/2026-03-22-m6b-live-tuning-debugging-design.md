@@ -67,7 +67,7 @@ GbpConfig applied to RobotAgent, factors, constraints
 
 ## Click-to-Inspect
 
-**Dependency:** `bevy_mod_picking` (added in M6a).
+**Dependency:** Built-in `bevy_picking` (already enabled in our Bevy feature list).
 
 **Clickable entities:**
 - Variable node meshes (the belief dots along trajectories)
