@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
+use bevy::render::renderer::RenderAdapterInfo;
 use bevy_egui::EguiPlugin;
 use serde::Deserialize;
 use state::{DrawConfig, MapRes, RobotStates, WsInbox, WsOutbox};
@@ -59,10 +60,20 @@ impl From<DrawToml> for DrawConfig {
     }
 }
 
+fn log_gpu_info(adapter: Res<RenderAdapterInfo>) {
+    tracing::info!("┌─── GPU Renderer Report ───────────────────────┐");
+    tracing::info!("│ Name:    {}", adapter.name);
+    tracing::info!("│ Backend: {:?}", adapter.backend);
+    tracing::info!("│ Type:    {:?}", adapter.device_type);
+    tracing::info!("│ Driver:  {} {}", adapter.driver, adapter.driver_info);
+    tracing::info!("└───────────────────────────────────────────────-┘");
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env()
-            .add_directive("visualiser=info".parse().unwrap()))
+            .add_directive("visualiser=info".parse().unwrap())
+            .add_directive("bevy_render::renderer=info".parse().unwrap()))
         .init();
 
     // Load draw config from the same config.toml the simulator uses
@@ -117,6 +128,7 @@ fn main() {
         .insert_resource(RobotStates::default())
         .insert_resource(WsInbox(inbox))
         .insert_resource(WsOutbox(outbox))
+        .add_systems(Startup, log_gpu_info)
         .add_plugins(MapScenePlugin)
         .add_plugins(RobotRenderPlugin)
         .add_plugins(UiPlugin)

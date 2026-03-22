@@ -3,11 +3,14 @@
 # Requires: DOCKER_BUILDKIT=1 (default in Docker 23+)
 # See: https://docs.github.com/en/actions/creating-actions/dockerfile-support-for-github-actions
 
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
 # ── Build args ──────────────────────────────────────────────────────
 ARG USERNAME=esp
 ARG CONTAINER_USER=${USERNAME}
+ARG USER_UID=1000
+ARG USER_GID=1000
+ARG RENDER_GID=992
 ARG RUST_CHANNEL=stable
 ARG ESP_BOARD=esp32c5
 
@@ -35,9 +38,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         tmux
 
 # ── 2. Bevy / wgpu Linux dependencies (X11 + Wayland + GPU) ───────
+# Kisak Mesa PPA provides the dzn (D3D12-over-Vulkan) driver needed for
+# GPU-accelerated Vulkan in WSL2 — Ubuntu's stock Mesa omits it.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y \
+    apt-get update && apt-get install -y software-properties-common \
+    && add-apt-repository -y ppa:kisak/kisak-mesa \
+    && apt-get update && apt-get install -y \
         libx11-dev \
         libxi-dev \
         libxcursor-dev \
@@ -48,11 +55,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libegl1-mesa-dev \
         libegl-mesa0 \
         libgles2-mesa-dev \
-        libgles2-mesa \
         mesa-utils \
         mesa-vulkan-drivers \
         libvulkan1 \
+        libvulkan-dev \
         vulkan-tools \
+        vulkan-validationlayers \
+        libdrm-dev \
         libxkbcommon-dev \
         libxkbcommon-x11-0 \
         libwayland-dev
@@ -77,9 +86,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN git lfs install --system
 
 # ── 6. Create non-root user with dialout/plugdev access ───────────
-RUN adduser --disabled-password --gecos "" ${CONTAINER_USER} \
+# Ubuntu 24.04 ships a default 'ubuntu' user at uid 1000 — remove it
+# so our user can claim that uid (needed for bind-mount permissions).
+RUN (userdel -r ubuntu 2>/dev/null || true) \
+    && (groupdel ubuntu 2>/dev/null || true) \
+    && (groupadd -g ${USER_GID} ${CONTAINER_USER} 2>/dev/null || true) \
+    && adduser --disabled-password --gecos "" --uid ${USER_UID} --gid ${USER_GID} ${CONTAINER_USER} \
     && (groupadd -g 46 plugdev 2>/dev/null || true) \
-    && (groupadd -g 104 render 2>/dev/null || true) \
+    && (groupmod -g ${RENDER_GID} render 2>/dev/null || groupadd -g ${RENDER_GID} render 2>/dev/null || true) \
     && usermod -aG dialout,plugdev,video,render ${CONTAINER_USER} \
     && echo "${CONTAINER_USER} ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers
 
@@ -105,38 +119,14 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
         --component rust-src,clippy,rustfmt \
         --target riscv32imac-unknown-none-elf
 
-# ── 9. ESP-RS tools (espflash, cargo-espflash, web-flash) ─────────
-RUN --mount=type=cache,target=/tmp/esp-dl,uid=1000 <<EOF
-    set -eu
-    ARCH=$(rustup show | grep "Default host" | sed -e 's/.* //')
+# ── 9. cargo-binstall (binary installer for cargo tools) ───────────
+RUN curl -fsSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 
-    for TOOL in cargo-espflash espflash; do
-        if [ ! -f "/tmp/esp-dl/${TOOL}-${ARCH}.zip" ]; then
-            curl -L "https://github.com/esp-rs/espflash/releases/latest/download/${TOOL}-${ARCH}.zip" \
-                -o "/tmp/esp-dl/${TOOL}-${ARCH}.zip"
-        fi
-        unzip -o "/tmp/esp-dl/${TOOL}-${ARCH}.zip" -d "${HOME}/.cargo/bin/"
-    done
+# ── 10. ESP-RS tools (espflash from git — needs unreleased ESP32-C5 support)
+RUN cargo install espflash --git https://github.com/esp-rs/espflash
 
-    if [ ! -f "/tmp/esp-dl/web-flash-${ARCH}.zip" ]; then
-        curl -L "https://github.com/esp-rs/esp-web-flash-server/releases/latest/download/web-flash-${ARCH}.zip" \
-            -o "/tmp/esp-dl/web-flash-${ARCH}.zip"
-    fi
-    unzip -o "/tmp/esp-dl/web-flash-${ARCH}.zip" -d "${HOME}/.cargo/bin/"
-EOF
-
-# ── 10. cargo-generate ─────────────────────────────────────────────
-RUN --mount=type=cache,target=/tmp/esp-dl,uid=1000 <<EOF
-    set -eu
-    ARCH=$(rustup show | grep "Default host" | sed -e 's/.* //')
-    VERSION=$(git ls-remote --refs --sort="version:refname" --tags "https://github.com/cargo-generate/cargo-generate" | cut -d/ -f3- | tail -n1)
-    TARBALL="cargo-generate-${VERSION}-${ARCH}.tar.gz"
-    if [ ! -f "/tmp/esp-dl/${TARBALL}" ]; then
-        curl -L "https://github.com/cargo-generate/cargo-generate/releases/latest/download/${TARBALL}" \
-            -o "/tmp/esp-dl/${TARBALL}"
-    fi
-    tar xf "/tmp/esp-dl/${TARBALL}" -C "${HOME}/.cargo/bin/"
-EOF
+# ── 10b. cargo-generate ───────────────────────────────────────────
+RUN cargo binstall -y --no-symlinks cargo-generate
 
 # ── 11. probe-rs (flash + debug over USB) ──────────────────────────
 RUN curl -LsSf https://github.com/probe-rs/probe-rs/releases/latest/download/probe-rs-tools-installer.sh | sh
@@ -145,9 +135,9 @@ RUN curl -LsSf https://github.com/probe-rs/probe-rs/releases/latest/download/pro
 # Claude Code
 RUN curl -fsSL https://claude.ai/install.sh | bash
 # GitHub Copilot CLI
-RUN curl -fsSL https://gh.io/copilot-install | bash
-# OpenCode
-RUN curl -fsSL https://opencode.ai/install | bash
+# RUN curl -fsSL https://gh.io/copilot-install | bash
+# # OpenCode
+# RUN curl -fsSL https://opencode.ai/install | bash
 
 # ── Entry ──────────────────────────────────────────────────────────
 WORKDIR /workspace

@@ -5420,9 +5420,11 @@ dependencies = [
  "gbp-comms",
  "gbp-map",
  "heapless 0.8.0",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-tungstenite",
+ "toml",
  "tracing",
  "tracing-subscriber",
 ]
