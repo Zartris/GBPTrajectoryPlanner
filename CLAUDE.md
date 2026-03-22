@@ -8,18 +8,22 @@ Reference: [Patwardhan et al., IEEE RA-L 2023](https://arxiv.org/abs/2203.11618)
 ## Repo Structure
 ```
 crates/
-  gbp-core/     — Factor trait, FactorGraph, DynamicsFactor, InterRobotFactor
+  gbp-core/     — Factor trait, FactorGraph, GbpConfig, DynamicsFactor, InterRobotFactor, VelocityBoundFactor
   gbp-agent/    — RobotAgent, trajectory tracking, inter-robot factor lifecycle
   gbp-comms/    — All message types, CommsInterface trait
   gbp-map/      — Map, Node, Edge, NURBS eval, arc-length table, A*
 src/bins/
-  simulator/    — Tokio + axum, all agents in-process
+  simulator/    — Tokio + axum, all agents in-process, TOML config/scenario loading
   bridge/       — Connects simulator WebSocket ↔ ESP32 UDP
-  visualiser/   — Bevy 0.18 + bevy_egui 0.39, compiles to WASM via trunk
-firmware/       — ESP32-C5 firmware, separate Cargo workspace
-maps/           — YAML map files (test_loop_map.yaml)
-docs/           — adding_a_factor.md, gbp_merge_design.md
-scripts/        — flash-all.sh, flash-device.sh, monitor.sh
+  visualiser/   — Bevy 0.18 + bevy_egui 0.39 + bevy_stl
+config/
+  config.toml          — GBP solver, factor weights, velocity limits, draw toggles
+  scenarios/           — Per-run scenario TOML files (map + robot assignments)
+firmware/              — ESP32-C5 firmware, separate Cargo workspace
+maps/                  — YAML map files (test_loop_map.yaml)
+assets/models/         — STL meshes (track, mainlines, markers, chassis)
+docs/                  — Design specs, implementation plans, handoff docs
+scripts/               — flash-all.sh, flash-device.sh, monitor.sh
 ```
 
 ## Hard Rules — Core Crates
@@ -40,11 +44,16 @@ Adding a new factor requires changes in **exactly 3 places**, all marked `// FAC
 Nothing else in `gbp-core` changes. See `docs/adding_a_factor.md` for the step-by-step guide.
 
 ## Key Design Decisions
-- **No goal factor** — gbpplanner's sliding goal creates windup (unbounded position error during forced stops). Replaced with a **velocity prior** (`DynamicsFactor`) that encodes "try to move at `v_nom`". No accumulated error, no windup.
+- **No goal factor** — gbpplanner's sliding goal creates windup (unbounded position error during forced stops). Replaced with a **velocity prior** (`DynamicsFactor`) that encodes "try to move at `v_nom`". No accumulated error, no windup. NOTE: This design choice is under review for M6.5 — the dynamics-as-motivation approach penalises stopping, making collision avoidance harder.
 - **Trapezoidal profile**: `v_nom(s) = min(nominal, sqrt(2 * decel_limit * (edge_length - s)))`. Taper only on the final edge of planned trajectory.
-- **Factor gating**: inter-robot factors spawn iff planned edge sequences share an edge. Geometrically exact — no Euclidean heuristics.
+- **VelocityBoundFactor**: BIPM-inspired adaptive precision barrier for v_min/v_max. Prevents GBP from predicting impossible velocities. See `velocity_bound_factor.rs` for theory.
+- **Factor gating**: inter-robot factors spawn when planned edge sequences share an edge AND 3D distance < activation_range. Per-variable spawning/despawning. NOTE: M6c will add distance-based communication alongside edge-sharing, with togglable edge filter.
+- **Cavity beliefs**: Factor-to-variable messages use proper cavity (marginal minus factor's own message) for both pairwise and unary factors. Broadcasts use cavity beliefs to prevent circular evidence.
+- **iterate_split**: Internal factors (dynamics, velocity_bound) get N_I rounds before external (IR) factors run. External round runs ALL factors. Variables always accumulate all messages. M_I=10, M_E=10 per MAGICS thesis §6.2.1.
+- **At-goal behavior**: v_nom=0 on all dynamics factors, jacobian_a=0 on IR factors (goal robot has nowhere to go, only approaching robot yields).
 - **`swap_remove` index tracking**: `remove_factor` is O(1) swap-remove. `InterRobotFactorSet` in `gbp-agent` maintains the `robot_id → factor_idx` map and patches it on every removal.
 - **1D problem in 3D world**: 3D geometry absorbed into scalar Jacobians in the agent layer. GBP variable is always scalar arc-length `s`.
+- **GbpConfig**: All tunable parameters in a `#![no_std]` Copy struct (`gbp-core/src/config.rs`). Simulator parses TOML into this struct. Core crates never parse files.
 
 ## Firmware Key Facts
 - Runtime: Embassy async (`embassy-executor`, `embassy-time`)
@@ -61,14 +70,14 @@ Nothing else in `gbp-core` changes. See `docs/adding_a_factor.md` for the step-b
 
 ## Crate Dependency Graph
 ```
-gbp-core  →  heapless
+gbp-core  →  heapless, libm
 gbp-comms →  heapless
 gbp-map   →  heapless, postcard  [+serde, serde_yaml with "parse" feature — PC only]
 gbp-agent →  gbp-core, gbp-comms, gbp-map
-simulator →  gbp-agent, gbp-comms, gbp-map(+parse), tokio, axum, serde_json
+simulator →  gbp-agent, gbp-core, gbp-comms, gbp-map(+parse), tokio, axum, serde_json, toml, clap
 esp32     →  gbp-agent, gbp-comms, gbp-map, esp-hal, esp-radio, embassy-*
 bridge    →  gbp-comms, gbp-map(+parse), tokio, axum, serde_json
-visualiser → gbp-comms, gbp-map(+parse), bevy, bevy_egui
+visualiser → gbp-comms, gbp-map(+parse), bevy, bevy_egui, bevy_stl, toml, serde
 ```
 
 ## Deployment Modes
@@ -80,19 +89,19 @@ Progressive bring-up: start all agents in simulator, migrate one robot at a time
 
 ## Build Commands
 ```bash
-# Serialize map (run after map changes)
-cargo run -p simulator -- --serialize-map maps/test_loop_map.yaml maps/test_loop.bin
+# Simulator (with config + scenario)
+cargo run -p simulator -- --config config/config.toml --scenario config/scenarios/fleet_4.toml
 
-# Simulator
-cargo run -p simulator -- --map maps/test_loop_map.yaml
+# Simulator (defaults, no config file)
+cargo run -p simulator -- --scenario config/scenarios/merge.toml
 
-# Visualiser (native)
-cargo run -p visualiser
+# Visualiser (reads config/config.toml for draw toggles via CONFIG_PATH env)
+DISPLAY=:0 cargo run -p visualiser
 
-# Visualiser (WASM)
-trunk serve src/bins/visualiser
+# Tests
+cargo test --workspace
 
-# Bridge — hybrid mode
+# Bridge — hybrid mode (not yet updated for TOML config)
 cargo run -p bridge -- --map maps/test_loop_map.yaml \
     --sim-ws ws://localhost:3000 --esp-udp 0.0.0.0:4242 \
     --sim-ids 0,1,2 --esp-ids 3,4

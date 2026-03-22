@@ -214,32 +214,45 @@ VEL_BOUND: kappa=10, margin=1.0, max_prec=100, v_min=-0.3
 
 ---
 
-## M5 — Fleet + Full Visualiser
+## M5 — Fleet + Full Visualiser (COMPLETED)
 
-**Goal:** N robots on the full map, full UI, realistic 3D scene with STL models.
+**Goal:** N robots on the full map, TOML config system, environment STLs, GBP factor fixes.
 
-### What gets built
+**Status:** Complete. Merged as PR #7.
+
+### What was built
 
 **Simulator**
-- Spawn N agents (default 4, configurable) at startup at distributed start nodes
-- Random trajectory mode: reassign random reachable goal on arrival at current goal
-- `TrajectoryCommand` routed by `robot_id`
+- N-robot fleet spawn from TOML scenario files (`--scenario config/scenarios/fleet_4.toml`)
+- TOML config system (`--config config/config.toml`) with all GBP/robot params
+- Unified spawn loop (no separate merge/endcollision code paths)
+- Pause/resume wired via WebSocket
+- N-robot pairwise collision monitor (10Hz)
 
-**Visualiser scene upgrade**
-- Replace arrow mesh with `assets/models/chassis.stl` for robot rendering
-- Overlay `assets/models/physical_track.stl` + `assets/models/magnetic_mainlines.stl` as environment geometry
-- Place `assets/models/magnetic_markers.stl` instances at fiducial positions from map
+**Config system**
+- `GbpConfig` struct in `gbp-core` (no_std, Copy) — all tunable parameters
+- `config/config.toml` with detailed comments per parameter
+- `config/scenarios/*.toml` for robot start/goal assignments by node name
+- `[visualisation.draw]` section for toggling render elements
 
-**Full UI panels**
-- Global panel: play/pause/restart/step, random mode toggle, global GBP params (`K`, iterations, `d_safe`, `r_comm`)
-- Robot panel: per-robot status (edge, `position_s`, velocity), `σ_dyn`/`σ_r` sliders, trajectory assignment input
-- Map panel: click node or edge in 3D view → inspect properties in sidebar
-- Trajectory input: click any node in 3D view → assign as goal → `TrajectoryCommand` → A*
+**GBP factor fixes (6 bugs found via MAGICS cross-reference)**
+1. IR factor zeta missing J*x linearization point
+2. Cavity beliefs for unary factors (was using full marginal)
+3. Re-accumulate beliefs after IR factor removal
+4. Broadcast cavity beliefs instead of marginals
+5. iterate_split corrected (always accumulate ALL messages in variable pass)
+6. IR factor residual sign convention (was pushing robots together)
 
-### Verification
-- 4 robots run in random mode for an extended continuous run without collision
-- STL models visible and correctly positioned on the physical track geometry
-- Clicking a node assigns it as a goal to the selected robot
+**Visualiser**
+- Environment STL meshes (track, mainlines, markers) with scale/rotation
+- Dynamic cuboid robot spawning with per-robot colors
+- Draw toggles (config-driven), per-robot HUD panels
+- NURBS edge polyline caching
+
+### Known Issues (deferred to M6.5)
+- Merge scenario: ~30 marginal collisions (dist 0.6-1.15m)
+- Goal collision with short trajectories
+- Dynamics factor as driving motivation penalises stopping
 
 ---
 
