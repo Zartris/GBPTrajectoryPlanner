@@ -147,7 +147,7 @@ fn spawn_new_robot_meshes(
     draw: Res<DrawConfig>,
 ) {
     if !draw.robots { return; }
-    let existing: std::vec::Vec<u32> = query.iter().map(|a| a.robot_id).collect();
+    let existing: std::collections::HashSet<u32> = query.iter().map(|a| a.robot_id).collect();
 
     for &id in states.0.keys() {
         if existing.contains(&id) { continue; }

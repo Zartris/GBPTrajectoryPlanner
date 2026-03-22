@@ -38,15 +38,19 @@ pub fn spawn_ws_client(
                         info!("connected to simulator");
                         let (mut sink, mut stream) = ws.split();
                         loop {
-                            // Drain outbox (commands to send to simulator)
-                            {
+                            // Drain outbox into local vec (don't hold mutex across await)
+                            let pending: std::vec::Vec<String> = {
                                 let mut q = outbox.lock().unwrap_or_else(|e| e.into_inner());
-                                while let Some(cmd) = q.pop_front() {
-                                    if sink.send(Message::Text(cmd.into())).await.is_err() {
-                                        break;
-                                    }
+                                q.drain(..).collect()
+                            };
+                            let mut send_failed = false;
+                            for cmd in pending {
+                                if sink.send(Message::Text(cmd.into())).await.is_err() {
+                                    send_failed = true;
+                                    break;
                                 }
                             }
+                            if send_failed { break; } // reconnect
                             // Try to receive with a short timeout so we can check outbox regularly
                             match tokio::time::timeout(
                                 tokio::time::Duration::from_millis(10),

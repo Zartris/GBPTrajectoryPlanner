@@ -132,13 +132,16 @@ fn build_edge_polylines(
     for edge in map.0.edges.iter() {
         let n = NURBS_EDGE_SAMPLES;
         let len = edge.geometry.length();
-        let pts: std::vec::Vec<Vec3> = (0..=n).map(|i| {
+        let mut pts: std::vec::Vec<Vec3> = std::vec::Vec::with_capacity(n + 1);
+        let mut last_valid = Vec3::ZERO;
+        for i in 0..=n {
             let s = (i as f32 / n as f32) * len;
-            match map.0.eval_position(edge.id, s) {
-                Some(p) => map_to_bevy(p),
-                None => Vec3::ZERO,
-            }
-        }).collect();
+            let p = match map.0.eval_position(edge.id, s) {
+                Some(p) => { let v = map_to_bevy(p); last_valid = v; v }
+                None => last_valid, // reuse last valid point instead of jumping to origin
+            };
+            pts.push(p);
+        }
         lines.push((edge.id, pts));
     }
     commands.insert_resource(EdgePolylines { lines });

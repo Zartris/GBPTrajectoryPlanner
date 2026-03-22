@@ -117,18 +117,23 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
             let var_indices = f.kind.as_factor().variable_indices();
 
             if var_indices.len() == 1 {
-                // Unary factor (e.g. InterRobotFactor after Schur complement):
-                // Compute cavity belief (marginal minus this factor's previous message)
-                // so linearize() sees the variable without its own influence.
+                // Unary factor: compute cavity (marginal minus this factor's message)
+                // so linearize() doesn't double-count its own influence.
                 let var_idx = var_indices[0];
-                let cav_eta = self.variables[var_idx].eta - f.msg_eta[0];
-                let cav_lambda = self.variables[var_idx].lambda - f.msg_lambda[0];
-
-                // Temporarily set variable to cavity for linearize()
                 let saved_eta = self.variables[var_idx].eta;
                 let saved_lambda = self.variables[var_idx].lambda;
-                self.variables[var_idx].eta = cav_eta;
-                self.variables[var_idx].lambda = cav_lambda;
+
+                let cav_lambda = saved_lambda - f.msg_lambda[0];
+                let cav_eta = saved_eta - f.msg_eta[0];
+
+                // Guard: if cavity precision is invalid (negative/tiny from
+                // strong IR messages), fall back to full marginal.
+                const MIN_CAV_LAMBDA: f32 = 1e-6;
+                if cav_lambda > MIN_CAV_LAMBDA && cav_lambda.is_finite() {
+                    self.variables[var_idx].eta = cav_eta;
+                    self.variables[var_idx].lambda = cav_lambda;
+                }
+                // else: leave variable at full marginal (no cavity subtraction)
 
                 let lf = f.kind.as_factor().linearize(&self.variables);
 
@@ -195,8 +200,16 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
                 let var_idx = var_indices[0];
                 let saved_eta = self.variables[var_idx].eta;
                 let saved_lambda = self.variables[var_idx].lambda;
-                self.variables[var_idx].eta -= f.msg_eta[0];
-                self.variables[var_idx].lambda -= f.msg_lambda[0];
+
+                let cav_lambda = saved_lambda - f.msg_lambda[0];
+                let cav_eta = saved_eta - f.msg_eta[0];
+
+                // Guard: if cavity precision is invalid, fall back to full marginal
+                const MIN_CAV_LAMBDA: f32 = 1e-6;
+                if cav_lambda > MIN_CAV_LAMBDA && cav_lambda.is_finite() {
+                    self.variables[var_idx].eta = cav_eta;
+                    self.variables[var_idx].lambda = cav_lambda;
+                }
 
                 let lf = f.kind.as_factor().linearize(&self.variables);
 
