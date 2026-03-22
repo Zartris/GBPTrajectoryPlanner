@@ -24,8 +24,8 @@ Lives in `crates/gbp-core/src/config.rs`. All fields are `f32` or `u8` — no_st
 pub struct GbpConfig {
     // -- GBP solver --
     pub msg_damping: f32,          // 0.5  — message update damping (1.0=none, 0.5=avg old/new)
-    pub internal_iters: u8,        // 3    — dynamics+velocity iters per external round
-    pub external_iters: u8,        // 5    — inter-robot factor rounds
+    pub internal_iters: u8,        // 10   — dynamics+velocity iters per external round
+    pub external_iters: u8,        // 10   — inter-robot factor rounds
 
     // -- Dynamics factor --
     pub sigma_dynamics: f32,       // 0.5  — dynamics factor noise std dev
@@ -81,8 +81,8 @@ Invalid values cause the simulator to panic with a descriptive error message. Va
 
 [gbp]
 msg_damping    = 0.5
-internal_iters = 3
-external_iters = 5
+internal_iters = 10
+external_iters = 10
 timestep       = 0.1
 init_variance  = 100.0
 anchor_precision = 1000.0

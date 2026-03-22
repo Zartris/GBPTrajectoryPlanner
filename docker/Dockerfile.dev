@@ -102,6 +102,11 @@ COPY --chown=${CONTAINER_USER}:${CONTAINER_USER} tmux.conf /home/${CONTAINER_USE
 COPY welcome.sh /usr/local/bin/trl-welcome
 RUN chmod +x /usr/local/bin/trl-welcome
 
+# ── 7b. Git hooks — activate on every shell session ───────────────
+# /repo is a bind mount so git config must run at runtime, not build time.
+RUN echo '\n# Activate project git hooks\ngit -C /repo config core.hooksPath .githooks 2>/dev/null || true' \
+    >> /home/${CONTAINER_USER}/.bashrc
+
 # ── Switch to non-root user ───────────────────────────────────────
 USER ${CONTAINER_USER}
 WORKDIR /home/${CONTAINER_USER}

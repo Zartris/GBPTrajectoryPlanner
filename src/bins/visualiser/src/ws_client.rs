@@ -51,9 +51,9 @@ pub fn spawn_ws_client(
                                 }
                             }
                             if send_failed { break; } // reconnect
-                            // Try to receive with a short timeout so we can check outbox regularly
+                            // Receive with 100ms timeout (reduced CPU vs 10ms busy-poll)
                             match tokio::time::timeout(
-                                tokio::time::Duration::from_millis(10),
+                                tokio::time::Duration::from_millis(100),
                                 stream.next(),
                             ).await {
                                 Ok(Some(Ok(Message::Text(json)))) => {

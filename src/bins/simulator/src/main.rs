@@ -52,7 +52,7 @@ fn pick_start_nodes(map: &Map, n: usize) -> std::vec::Vec<NodeId> {
         .filter(|node| node.node_type == NodeType::Waypoint)
         .map(|n| n.id)
         .collect();
-    if waypoints.is_empty() { return vec![]; }
+    if waypoints.is_empty() || n == 0 { return vec![]; }
     let n = n.min(waypoints.len());
     let step = waypoints.len() / n;
     (0..n).map(|i| waypoints[i * step]).collect()

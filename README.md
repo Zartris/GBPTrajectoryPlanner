@@ -32,10 +32,8 @@ cargo run -p simulator -- --config config/config.toml --scenario config/scenario
 # Terminal 2: Start the visualiser (Bevy 3D window)
 DISPLAY=:0 cargo run -p visualiser
 
-# Optional: If you have trouble with wayland vs X11, try:
-WAYLAND_DISPLAY= cargo run -p visualiser
-# or 
-DISPLAY=:0 cargo run -p visualiser --no-default-features --features "visualiser/x11"
+# Optional: If you have trouble with wayland vs X11, try forcing X11:
+WAYLAND_DISPLAY= DISPLAY=:0 cargo run -p visualiser
 ```
 
 Available scenarios:
