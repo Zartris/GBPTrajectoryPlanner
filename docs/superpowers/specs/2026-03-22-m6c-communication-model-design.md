@@ -36,18 +36,30 @@ let is_partner = within_range && (!self.config.edge_filter_enabled || shares_edg
 if !is_partner { continue; }
 ```
 
+**Two-level gating:** `comm_radius` is the outer gate (robot-to-robot relationship). The existing `ir_activation_range` is the inner gate (per-timestep factor creation). Both are retained. Recommend `comm_radius >= ir_activation_range` — if comm_radius is smaller, the per-timestep check becomes unreachable. The spec does NOT remove the inner `ir_activation_range` check.
+
+**`min_3d_distance_to_neighbours` must also be updated** to use the same dual-gate logic for consistency (it currently uses edge-sharing only).
+
+**Degraded position conversion when edge_filter is off:** When two robots share no edges, the 3D position conversion for predicted timesteps falls back to `bcast.pos` (the remote robot's current position) for all horizon steps k. IR factors will use current-position distance for all timesteps rather than predicted positions. This is a known limitation — the factor still works but with reduced lookahead accuracy.
+
 ## Communication Failure Rate
 
 On each tick, before processing a received broadcast, roll against `failure_rate`:
 ```rust
 // In step(), when iterating broadcasts:
+// RobotAgent gets an internal tick_count: u32 field, incremented each step() call.
 if self.config.failure_rate > 0.0 {
-    // Simple deterministic hash-based "random" — no_std compatible, no RNG needed
-    let hash = (self.robot_id as u32).wrapping_mul(tick_count).wrapping_mul(bcast.robot_id as u32 + 1);
-    let roll = (hash % 1000) as f32 / 1000.0;
+    // Xorshift-style mixing — no_std compatible, deterministic, low bias
+    let mut h = (self.robot_id as u32) ^ (self.tick_count.wrapping_mul(2654435761));
+    h ^= (bcast.robot_id as u32).wrapping_mul(2246822519);
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x45d9f3b);
+    let roll = (h % 1000) as f32 / 1000.0;
     if roll < self.config.failure_rate { continue; } // drop this broadcast
 }
 ```
+
+**Tick counter:** `RobotAgent` gains a `tick_count: u32` field, incremented at the start of each `step()` call. This is internal to the agent, not passed from outside.
 
 When a broadcast is dropped:
 - IR factors for that robot are NOT updated this tick (stale Jacobians/distances persist)
@@ -76,7 +88,9 @@ edge_filter_enabled = true    # require shared planned edges (togglable at runti
 failure_rate = 0.0            # probability of dropping a broadcast (0.0–1.0)
 ```
 
-All three are added to `GbpConfig` and live-tunable from the settings panel (M6b).
+All three are added to `GbpConfig` and live-tunable from the settings panel (M6b). Runtime config propagation is handled by M6b's watch channel mechanism.
+
+**Note:** Adding fields to `GbpConfig` requires updating the `Default` impl, the `default_matches_hardcoded_values` test, and the `TomlConfig` → `GbpConfig` conversion.
 
 ## File Map
 
