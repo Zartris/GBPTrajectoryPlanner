@@ -299,3 +299,22 @@ fn my_reactive_system(
 
 **Total new code:** ~920 lines (including tests and documentation).
 **New tests:** 15 (events: 4, emission systems: 8, addons: 2, vis_api: 1).
+
+---
+
+## Review History
+
+### Internal Review (Opus)
+**Verdict:** APPROVED with minor revisions
+- **Fixed I-1:** debug_monitor proximity spam → now uses ProximityAlert events (rate-limited)
+- **Fixed I-3:** Clippy warning in proximity_emitter → iterator instead of index
+- **Fixed M-7:** Added PartialEq to RobotChangeType for ergonomic matching
+- **Deferred I-4:** send_sim_command could take &self instead of &mut self (interior mutability)
+
+### Copilot Reviews (4 rounds total)
+- **Round 1:** 8 comments — all addressed (set_draw_all struct literal, env var caching, Python compat, etc.)
+- **Round 2:** 2 comments — both fixed (O(n²) duplication eliminated, addons gated behind env vars)
+- All comments replied to on GitHub
+
+### Backup
+Branch `vis-addon-api-backup` at commit `2f5e29c` preserves the pre-event-system state for rollback if needed.
