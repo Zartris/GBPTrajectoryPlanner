@@ -11,6 +11,7 @@
 // reach directly into Bevy resources for full power.
 
 mod startup_screenshot;
+mod debug_monitor;
 
 use bevy::prelude::*;
 
@@ -20,7 +21,6 @@ pub struct AddonPlugins;
 impl Plugin for AddonPlugins {
     fn build(&self, app: &mut App) {
         app.add_plugins(startup_screenshot::StartupScreenshotAddon);
-        // Add further addons here, e.g.:
-        // app.add_plugins(my_addon::MyAddon);
+        app.add_plugins(debug_monitor::DebugMonitorAddon);
     }
 }

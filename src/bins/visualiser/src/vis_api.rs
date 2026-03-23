@@ -9,9 +9,6 @@
 //       api.log(&format!("t={:.1}s", api.elapsed_secs()));
 //       if something { api.screenshot("/tmp/out.png"); }
 //   }
-//
-// Only resources that exist on the main branch are included here.
-// CameraState (planned for M6a) is NOT included yet.
 
 use bevy::prelude::*;
 // SystemParam *derive macro* is not re-exported from bevy::prelude — import explicitly.
@@ -19,8 +16,10 @@ use bevy::ecs::system::SystemParam;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 // In Bevy 0.18 AppExit is sent via MessageWriter (EventWriter was removed).
 use bevy::ecs::message::MessageWriter;
-use crate::state::{DrawConfig, RobotStates};
+use crate::camera::{CameraMode, CameraState};
+use crate::state::{DrawConfig, RobotStates, WsOutbox};
 use crate::ui::SimPaused;
+use gbp_map::map::EdgeId;
 
 /// A Bevy [`SystemParam`] that provides a clean, stable API surface for
 /// visualiser addons.  Addon authors add `mut api: VisApi` to their system
@@ -36,6 +35,8 @@ pub struct VisApi<'w, 's> {
     robot_states: Res<'w, RobotStates>,
     time: Res<'w, Time>,
     app_exit: MessageWriter<'w, AppExit>,
+    camera: ResMut<'w, CameraState>,
+    ws_outbox: Res<'w, WsOutbox>,
 }
 
 // All methods on VisApi are public API for addons; suppress dead_code lint.
@@ -74,20 +75,29 @@ impl<'w, 's> VisApi<'w, 's> {
     /// Recognised field names mirror the fields of [`DrawConfig`]:
     /// `"physical_track"`, `"magnetic_mainlines"`, `"magnetic_markers"`,
     /// `"node_spheres"`, `"edge_lines"`, `"robots"`, `"planned_paths"`,
-    /// `"belief_tubes"`, `"factor_links"`.
+    /// `"belief_tubes"`, `"factor_links"`, `"uncertainty_bars"`,
+    /// `"path_traces"`, `"comm_radius_circles"`, `"ir_safety_distance"`,
+    /// `"robot_colliders"`, `"collision_markers"`, `"infinite_grid"`.
     ///
     /// Unknown names log a warning via `tracing::warn!` and are otherwise ignored.
     pub fn set_draw(&mut self, field: &str, on: bool) {
         match field {
-            "physical_track"     => self.draw.physical_track     = on,
-            "magnetic_mainlines" => self.draw.magnetic_mainlines = on,
-            "magnetic_markers"   => self.draw.magnetic_markers   = on,
-            "node_spheres"       => self.draw.node_spheres       = on,
-            "edge_lines"         => self.draw.edge_lines         = on,
-            "robots"             => self.draw.robots             = on,
-            "planned_paths"      => self.draw.planned_paths      = on,
-            "belief_tubes"       => self.draw.belief_tubes       = on,
-            "factor_links"       => self.draw.factor_links       = on,
+            "physical_track"       => self.draw.physical_track       = on,
+            "magnetic_mainlines"   => self.draw.magnetic_mainlines   = on,
+            "magnetic_markers"     => self.draw.magnetic_markers     = on,
+            "node_spheres"         => self.draw.node_spheres         = on,
+            "edge_lines"           => self.draw.edge_lines           = on,
+            "robots"               => self.draw.robots               = on,
+            "planned_paths"        => self.draw.planned_paths        = on,
+            "belief_tubes"         => self.draw.belief_tubes         = on,
+            "factor_links"         => self.draw.factor_links         = on,
+            "uncertainty_bars"     => self.draw.uncertainty_bars     = on,
+            "path_traces"          => self.draw.path_traces          = on,
+            "comm_radius_circles"  => self.draw.comm_radius_circles  = on,
+            "ir_safety_distance"   => self.draw.ir_safety_distance   = on,
+            "robot_colliders"      => self.draw.robot_colliders      = on,
+            "collision_markers"    => self.draw.collision_markers    = on,
+            "infinite_grid"        => self.draw.infinite_grid        = on,
             other => tracing::warn!("[addon] set_draw: unknown field '{}'", other),
         }
     }
@@ -96,17 +106,27 @@ impl<'w, 's> VisApi<'w, 's> {
     ///
     /// Uses a struct literal so the compiler will catch any newly-added
     /// [`DrawConfig`] fields that are not yet handled here.
+    /// Note: `ir_d_safe` is a numeric field, not a toggle — it retains its
+    /// current value when this method is called.
     pub fn set_draw_all(&mut self, on: bool) {
         *self.draw = DrawConfig {
-            physical_track:     on,
-            magnetic_mainlines: on,
-            magnetic_markers:   on,
-            node_spheres:       on,
-            edge_lines:         on,
-            robots:             on,
-            planned_paths:      on,
-            belief_tubes:       on,
-            factor_links:       on,
+            physical_track:      on,
+            magnetic_mainlines:  on,
+            magnetic_markers:    on,
+            node_spheres:        on,
+            edge_lines:          on,
+            robots:              on,
+            planned_paths:       on,
+            belief_tubes:        on,
+            factor_links:        on,
+            uncertainty_bars:    on,
+            path_traces:         on,
+            comm_radius_circles: on,
+            ir_safety_distance:  on,
+            robot_colliders:     on,
+            collision_markers:   on,
+            infinite_grid:       on,
+            ir_d_safe:           self.draw.ir_d_safe,
         };
     }
 
@@ -139,12 +159,102 @@ impl<'w, 's> VisApi<'w, 's> {
     }
 
     // -------------------------------------------------------------------------
+    // Camera control
+    // -------------------------------------------------------------------------
+
+    /// Set the camera to orbit mode with the given yaw (radians), pitch (radians),
+    /// and distance (metres) from the current focus point.
+    pub fn set_camera_orbit(&mut self, yaw: f32, pitch: f32, distance: f32) {
+        self.camera.mode = CameraMode::Orbit;
+        self.camera.yaw = yaw;
+        self.camera.pitch = pitch;
+        self.camera.distance = distance;
+    }
+
+    /// Reset the camera to its initial position (as set when the map was loaded).
+    pub fn reset_camera(&mut self) {
+        self.camera.reset();
+    }
+
+    /// Enter follow mode tracking the robot with the given ID.
+    /// If no robot with that ID exists the camera will fall back to orbit mode
+    /// on the next update tick.
+    pub fn follow_robot(&mut self, robot_id: u32) {
+        self.camera.mode = CameraMode::Follow(robot_id);
+    }
+
+    /// Exit follow mode and return to free orbit.
+    pub fn exit_follow(&mut self) {
+        self.camera.mode = CameraMode::Orbit;
+    }
+
+    // -------------------------------------------------------------------------
     // Robot state queries
     // -------------------------------------------------------------------------
 
     /// Returns the number of robots currently tracked by the visualiser.
     pub fn robot_count(&self) -> usize {
         self.robot_states.0.len()
+    }
+
+    /// Returns a sorted list of all robot IDs currently tracked.
+    pub fn robot_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = self.robot_states.0.keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Returns the latest 3-D world position `[x, y, z]` for the given robot,
+    /// or `None` if the robot is not known.
+    pub fn robot_position(&self, id: u32) -> Option<[f32; 3]> {
+        self.robot_states.0.get(&id).map(|s| s.pos_3d)
+    }
+
+    /// Returns the latest scalar velocity (m/s along edge) for the given robot,
+    /// or `None` if the robot is not known.
+    pub fn robot_velocity(&self, id: u32) -> Option<f32> {
+        self.robot_states.0.get(&id).map(|s| s.velocity)
+    }
+
+    /// Returns the current `(EdgeId, arc-length s)` for the given robot,
+    /// or `None` if the robot is not known.
+    pub fn robot_edge(&self, id: u32) -> Option<(EdgeId, f32)> {
+        self.robot_states.0.get(&id).map(|s| (s.current_edge, s.position_s))
+    }
+
+    /// Returns the number of active inter-robot factors for the given robot,
+    /// or `None` if the robot is not known.
+    pub fn robot_factor_count(&self, id: u32) -> Option<usize> {
+        self.robot_states.0.get(&id).map(|s| s.active_factor_count)
+    }
+
+    /// Returns the minimum 3-D distance to the nearest neighbour for the given
+    /// robot, or `None` if the robot is not known.
+    pub fn robot_min_distance(&self, id: u32) -> Option<f32> {
+        self.robot_states.0.get(&id).map(|s| s.min_neighbour_dist_3d)
+    }
+
+    // -------------------------------------------------------------------------
+    // WebSocket command sending
+    // -------------------------------------------------------------------------
+
+    /// Enqueue a raw JSON string to be sent to the simulator via WebSocket.
+    ///
+    /// The message is placed in the `WsOutbox` and will be sent on the next
+    /// WebSocket tick (typically within 100 ms).
+    pub fn send_sim_command(&mut self, json: &str) {
+        let mut q = self.ws_outbox.0.lock().unwrap_or_else(|e| e.into_inner());
+        q.push_back(json.to_owned());
+    }
+
+    /// Send a `{"cmd":"pause"}` command to the simulator.
+    pub fn pause_sim(&mut self) {
+        self.send_sim_command(r#"{"cmd":"pause"}"#);
+    }
+
+    /// Send a `{"cmd":"resume"}` command to the simulator.
+    pub fn resume_sim(&mut self) {
+        self.send_sim_command(r#"{"cmd":"resume"}"#);
     }
 
     // -------------------------------------------------------------------------

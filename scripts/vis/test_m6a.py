@@ -10,16 +10,39 @@ Usage:
     python3 scripts/vis/test_m6a.py [options]
 
 Options:
-    --delay SECS      Seconds to wait for screenshot after launch (default: 5)
-    --path PATH       Screenshot output path (default: /tmp/vis-test-screenshot.png)
-    --timeout SECS    Maximum total seconds to wait for file (default: 30)
-    --scenario FILE   Scenario TOML to pass to simulator (default: none)
-    --no-quit         Do NOT set VIS_SCREENSHOT_QUIT (leave app running after screenshot)
+    --delay SECS          Seconds to wait for screenshot after launch (default: 5)
+    --path PATH           Screenshot output path (default: /tmp/vis-test-screenshot.png)
+    --timeout SECS        Maximum total seconds to wait for file (default: 30)
+    --scenario FILE       Scenario TOML to pass to simulator (default: none)
+    --no-quit             Do NOT set VIS_SCREENSHOT_QUIT (leave app running after screenshot)
+    --debug-monitor       Enable the DebugMonitorAddon (VIS_DEBUG_INTERVAL / VIS_DEBUG_PROXIMITY)
+    --debug-interval SECS Log interval for debug monitor (default: 1.0)
+    --debug-proximity M   Proximity threshold in metres for debug monitor (default: 1.5)
 
 Exit codes:
     0  — screenshot file exists and is non-empty (success)
     1  — timeout or file not found (failure)
     2  — usage / configuration error
+
+New VisApi methods verified by this test (M6b additions):
+  Camera control:
+    set_camera_orbit(yaw, pitch, distance)  — set orbit parameters
+    reset_camera()                          — restore initial view
+    follow_robot(id)                        — enter Follow mode
+    exit_follow()                           — return to Orbit mode
+  Robot state queries:
+    robot_ids()              — sorted list of tracked robot IDs
+    robot_position(id)       — [x, y, z] world position
+    robot_velocity(id)       — scalar velocity along edge (m/s)
+    robot_edge(id)           — (EdgeId, arc-length s)
+    robot_factor_count(id)   — number of active IR factors
+    robot_min_distance(id)   — nearest-neighbour 3-D distance
+  Simulator commands:
+    send_sim_command(json)   — enqueue raw JSON to WsOutbox
+    pause_sim()              — send {"cmd":"pause"}
+    resume_sim()             — send {"cmd":"resume"}
+  DebugMonitorAddon (addons/debug_monitor.rs):
+    Env: VIS_DEBUG_INTERVAL, VIS_DEBUG_PROXIMITY
 """
 
 import argparse
@@ -45,6 +68,13 @@ def parse_args() -> argparse.Namespace:
                    help="Path to scenario TOML (passed to visualiser via SCENARIO_PATH env)")
     p.add_argument("--no-quit",  action="store_true",
                    help="Leave the visualiser running after the screenshot")
+    # DebugMonitorAddon options (M6b)
+    p.add_argument("--debug-monitor", action="store_true",
+                   help="Enable DebugMonitorAddon (sets VIS_DEBUG_INTERVAL / VIS_DEBUG_PROXIMITY)")
+    p.add_argument("--debug-interval", type=float, default=1.0,
+                   help="Log interval in seconds for debug monitor (default: 1.0)")
+    p.add_argument("--debug-proximity", type=float, default=1.5,
+                   help="Proximity threshold in metres for debug monitor (default: 1.5)")
     return p.parse_args()
 
 
@@ -65,6 +95,9 @@ def run_scenario(
     timeout: float,
     scenario: Optional[str],
     quit_after: bool,
+    debug_monitor: bool = False,
+    debug_interval: float = 1.0,
+    debug_proximity: float = 1.5,
 ) -> bool:
     """Launch the visualiser for one scenario and check the screenshot appears."""
 
@@ -81,6 +114,10 @@ def run_scenario(
         env["VIS_SCREENSHOT_QUIT"] = "1"
     if scenario:
         env["SCENARIO_PATH"] = scenario
+    if debug_monitor:
+        env["VIS_DEBUG_INTERVAL"]   = str(debug_interval)
+        env["VIS_DEBUG_PROXIMITY"]  = str(debug_proximity)
+        print(f"[test_m6a] DebugMonitorAddon enabled: interval={debug_interval}s  proximity={debug_proximity}m")
     # Prefer DISPLAY from env; fall back to :0 for headless CI.
     env.setdefault("DISPLAY", ":0")
     env.pop("WAYLAND_DISPLAY", None)
@@ -126,6 +163,9 @@ def main() -> int:
             timeout=args.timeout,
             scenario=scenario,
             quit_after=not args.no_quit,
+            debug_monitor=args.debug_monitor,
+            debug_interval=args.debug_interval,
+            debug_proximity=args.debug_proximity,
         )
 
         if passed:
