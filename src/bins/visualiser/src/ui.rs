@@ -258,29 +258,56 @@ fn section_heading(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     ui.add(egui::Separator::default().spacing(2.0));
 }
 
-/// Toggle row: clickable dot + label, subtle highlight when active.
+/// Toggle switch row: label on left, pill-shaped toggle on right (like MAGICS).
 fn styled_toggle(ui: &mut egui::Ui, value: &mut bool, label: &str) {
-    let dot = if *value { "●" } else { "○" };
-    let dot_color = if *value {
-        egui::Color32::from_rgb(100, 220, 180)
-    } else {
-        egui::Color32::from_rgb(80, 85, 100)
-    };
     let text_color = if *value {
         egui::Color32::from_rgb(210, 220, 235)
     } else {
-        egui::Color32::from_rgb(150, 155, 170)
+        egui::Color32::from_rgb(130, 135, 150)
     };
 
     ui.horizontal(|ui| {
         ui.add_space(4.0);
-        let response = ui.add(egui::Label::new(
-            egui::RichText::new(format!("{dot}  {label}")).color(text_color).size(11.0)
-        ).sense(egui::Sense::click()));
-        if response.clicked() {
-            *value = !*value;
-        }
+        ui.label(egui::RichText::new(label).color(text_color).size(11.0));
+
+        // Push toggle to right edge
+        let remaining = ui.available_width() - 32.0;
+        if remaining > 0.0 { ui.add_space(remaining); }
+
+        // Draw pill-shaped toggle switch
+        toggle_switch(ui, value);
     });
+}
+
+/// Custom pill-shaped toggle switch widget.
+fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+    let desired_size = egui::vec2(28.0, 14.0);
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+    }
+
+    let painter = ui.painter();
+    let radius = rect.height() / 2.0;
+
+    // Track background
+    let bg = if *on {
+        egui::Color32::from_rgb(60, 180, 140)  // teal-green when on
+    } else {
+        egui::Color32::from_rgb(55, 60, 75)     // dark grey when off
+    };
+    painter.rect_filled(rect, radius, bg);
+
+    // Circle knob
+    let knob_x = if *on {
+        rect.right() - radius
+    } else {
+        rect.left() + radius
+    };
+    let knob_center = egui::pos2(knob_x, rect.center().y);
+    painter.circle_filled(knob_center, radius - 2.0, egui::Color32::WHITE);
+
+    response
 }
 
 /// Key-value stat row for robot panels.
