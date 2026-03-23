@@ -246,13 +246,33 @@ fn camera_input_system(
         state.distance = (state.distance * (1.0 - d * ZOOM_FACTOR)).clamp(ZOOM_MIN, ZOOM_MAX);
     }
 
-    // ── 5. Mouse drag ───────────────────────────────────────────────────
+    // ── 5. Pan-mode keyboard movement (runs even without mouse delta) ────
+    if matches!(state.mode, CameraMode::Pan) && !egui_over {
+        let speed = state.distance * PAN_KEY_SPEED;
+        let right = Vec3::new(state.yaw.cos(), 0.0, -state.yaw.sin());
+        let fwd = Vec3::new(-state.yaw.sin(), 0.0, -state.yaw.cos());
+
+        if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+            state.focus += fwd * speed * dt;
+        }
+        if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+            state.focus -= fwd * speed * dt;
+        }
+        if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
+            state.focus -= right * speed * dt;
+        }
+        if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
+            state.focus += right * speed * dt;
+        }
+    }
+
+    // ── 6. Mouse drag (requires cursor movement) ──────────────────────
     if egui_over || cursor_delta == Vec2::ZERO {
         return;
     }
 
     match state.mode {
-        CameraMode::Orbit => {
+        CameraMode::Orbit | CameraMode::Pan => {
             if left_pressed {
                 state.yaw -= cursor_delta.x * ORBIT_SENSITIVITY;
                 state.pitch = (state.pitch + cursor_delta.y * ORBIT_SENSITIVITY)
@@ -264,26 +284,7 @@ fn camera_input_system(
                 state.focus += right * (-cursor_delta.x * scale) + fwd * (cursor_delta.y * scale);
             }
         }
-        CameraMode::Pan => {
-            let speed = state.distance * PAN_KEY_SPEED;
-            let right = Vec3::new(state.yaw.cos(), 0.0, -state.yaw.sin());
-            let fwd = Vec3::new(-state.yaw.sin(), 0.0, -state.yaw.cos());
-
-            if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
-                state.focus += fwd * speed * dt;
-            }
-            if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
-                state.focus -= fwd * speed * dt;
-            }
-            if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
-                state.focus -= right * speed * dt;
-            }
-            if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
-                state.focus += right * speed * dt;
-            }
-        }
         CameraMode::Follow(_) => {
-            // Allow orbit (yaw/pitch) and zoom around the followed robot
             if left_pressed {
                 state.yaw -= cursor_delta.x * ORBIT_SENSITIVITY;
                 state.pitch = (state.pitch + cursor_delta.y * ORBIT_SENSITIVITY)

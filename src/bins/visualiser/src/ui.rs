@@ -49,7 +49,9 @@ impl Plugin for UiPlugin {
            .add_plugins(bevy::diagnostic::EntityCountDiagnosticsPlugin::default())
            .init_resource::<SimPaused>()
            .init_resource::<BackendStats>()
+           
            .init_resource::<MetricsVisible>()
+           .init_resource::<InspectorVisible>()
            // Toggle runs in Update (once per frame) — NOT in EguiPrimaryContextPass
            // which runs multiple times per frame (multipass) and would double-toggle.
            .add_systems(Update, toggle_overlays)
@@ -128,25 +130,6 @@ fn draw_hud(
             ui.label(egui::RichText::new("F1 Inspector  ·  F2 Metrics")
                 .size(10.0).color(egui::Color32::from_rgb(100, 110, 130)));
         });
-
-    // Metrics (toggled by F2) — rendered inside Control panel since separate windows fail to render
-    if metrics_vis.0 {
-        let active_ir_total: usize = states.0.values().map(|s| s.active_factor_count).sum();
-        let entity_count = diagnostics
-            .get(&bevy::diagnostic::EntityCountDiagnosticsPlugin::ENTITY_COUNT)
-            .and_then(|d| d.smoothed())
-            .unwrap_or(0.0) as u64;
-
-        egui::Window::new("Metrics")
-            .default_pos(egui::pos2(200.0, 200.0))
-            .show(ctx, |ui| {
-                ui.label(format!("FPS: {:.0}  ({:.1}ms)", fps, frame_ms));
-                ui.label(format!("Backend: {:.0} Hz", backend.msg_hz));
-                ui.label(format!("Robots: {}", states.0.len()));
-                ui.label(format!("Active IR factors: {}", active_ir_total));
-                ui.label(format!("Entities: {}", entity_count));
-            });
-    }
 
     // ── Control Panel ─────────────────────────────────────────────────
     let accent = egui::Color32::from_rgb(100, 200, 220); // teal accent
