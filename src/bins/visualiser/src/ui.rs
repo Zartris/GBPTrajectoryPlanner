@@ -156,13 +156,13 @@ fn draw_hud(
         ui.add_space(4.0);
 
         // ── Draw Toggles ──
-        egui::CollapsingHeader::new(egui::RichText::new("◉  Draw Layers").color(accent).size(12.0))
+        egui::CollapsingHeader::new(egui::RichText::new("Draw Layers").color(accent).strong().size(12.0))
             .default_open(false)
             .show(ui, |ui| {
                 ui.add_space(4.0);
 
                 // Environment group
-                section_heading(ui, "⬡  Environment", heading_color);
+                section_heading(ui, "Environment", heading_color);
                 styled_toggle(ui, &mut draw.physical_track,     "Physical track");
                 styled_toggle(ui, &mut draw.magnetic_mainlines, "Magnetic mainlines");
                 styled_toggle(ui, &mut draw.magnetic_markers,   "Magnetic markers");
@@ -173,7 +173,7 @@ fn draw_hud(
                 ui.add_space(6.0);
 
                 // Robots group
-                section_heading(ui, "⊕  Robots", heading_color);
+                section_heading(ui, "Robots", heading_color);
                 styled_toggle(ui, &mut draw.robots,              "Robots");
                 styled_toggle(ui, &mut draw.planned_paths,       "Planned paths");
                 styled_toggle(ui, &mut draw.belief_tubes,        "Belief tubes");
@@ -188,7 +188,7 @@ fn draw_hud(
                 ui.add_space(6.0);
 
                 // Gizmo master
-                section_heading(ui, "⚙  Gizmos", heading_color);
+                section_heading(ui, "Gizmos", heading_color);
                 let (gizmo_cfg, _) = gizmo_store.config_mut::<DefaultGizmoConfigGroup>();
                 styled_toggle(ui, &mut gizmo_cfg.enabled, "All gizmos");
 
@@ -252,10 +252,25 @@ fn draw_hud(
 
 // ── UI Helpers ──────────────────────────────────────────────────────────────
 
-/// Colored section heading with a thin separator line beneath.
-fn section_heading(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
-    ui.label(egui::RichText::new(text).color(color).size(11.5).strong());
-    ui.add(egui::Separator::default().spacing(2.0));
+/// Subcategory heading — uppercase, muted, with a thin line beneath.
+/// Distinct from colored category headers but clearly separates groups.
+fn section_heading(ui: &mut egui::Ui, text: &str, _color: egui::Color32) {
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new("─")
+                .color(egui::Color32::from_rgb(60, 65, 80))
+                .size(10.0)
+        );
+        ui.label(
+            egui::RichText::new(text.to_uppercase())
+                .color(egui::Color32::from_rgb(160, 170, 190))
+                .size(9.5)
+                .strong()
+        );
+    });
+    ui.add(egui::Separator::default().spacing(1.0));
 }
 
 /// Toggle switch row: label on left, pill-shaped toggle on right (like MAGICS).
