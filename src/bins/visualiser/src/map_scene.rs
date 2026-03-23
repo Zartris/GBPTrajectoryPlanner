@@ -17,13 +17,34 @@ const MAGNETIC_MARKERS_STL: &str = "models/magnetic_markers.stl";
 /// STL models are authored in millimeters; map coordinates are in meters.
 const STL_SCALE: f32 = 0.001;
 
+#[derive(Resource, Debug, Clone)]
+pub struct MapBounds {
+    pub center: Vec3,
+    pub span: f32,
+}
+
 pub struct MapScenePlugin;
 
 impl Plugin for MapScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (configure_gizmos, spawn_map_scene, spawn_environment_stl, build_edge_polylines).chain())
+        app.add_systems(Startup, (configure_gizmos, compute_map_bounds, spawn_map_scene, spawn_environment_stl, build_edge_polylines).chain())
            .add_systems(Update, draw_edge_gizmos);
     }
+}
+
+pub fn compute_map_bounds(mut commands: Commands, map: Res<MapRes>) {
+    let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
+    let (mut min_y, mut max_y) = (f32::MAX, f32::MIN);
+    let (mut cx, mut cy, mut cz) = (0.0f32, 0.0f32, 0.0f32);
+    let n = map.0.nodes.len().max(1) as f32;
+    for node in map.0.nodes.iter() {
+        cx += node.position[0]; cy += node.position[1]; cz += node.position[2];
+        min_x = min_x.min(node.position[0]); max_x = max_x.max(node.position[0]);
+        min_y = min_y.min(node.position[1]); max_y = max_y.max(node.position[1]);
+    }
+    let center = Vec3::new(cx / n, cz / n, -cy / n);
+    let span = ((max_x - min_x).max(max_y - min_y)).max(5.0);
+    commands.insert_resource(MapBounds { center, span });
 }
 
 /// Set gizmo line width to be visible (default is ~1px, invisible over X11).
@@ -38,6 +59,14 @@ fn configure_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
 /// Convert map coordinates [x, y, z] to Bevy world coords (Y-up).
 fn map_to_bevy(p: [f32; 3]) -> Vec3 {
     Vec3::new(p[0], p[2], -p[1])
+}
+
+fn spawn_camera(mut commands: Commands, bounds: Res<MapBounds>) {
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(bounds.center.x, bounds.span * 1.2, bounds.center.z + bounds.span * 0.8)
+            .looking_at(bounds.center, Vec3::Y),
+    ));
 }
 
 /// Colour by node type.
@@ -57,8 +86,8 @@ pub fn midpoint(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [(a[0]+b[0])/2.0, (a[1]+b[1])/2.0, (a[2]+b[2])/2.0]
 }
 
-/// Spawn camera, lights, and node spheres.
-fn spawn_map_scene(
+/// Spawn lights and node spheres (camera spawned by CameraPlugin after this).
+pub fn spawn_map_scene(
     mut commands: Commands,
     map: Res<MapRes>,
     draw: Res<DrawConfig>,
@@ -76,26 +105,6 @@ fn spawn_map_scene(
             ..default()
         },
         Transform::from_xyz(10.0, 20.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-
-    // Compute map bounding box for camera placement
-    let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
-    let (mut min_y, mut max_y) = (f32::MAX, f32::MIN);
-    let (mut cx, mut cy, mut cz) = (0.0f32, 0.0f32, 0.0f32);
-    let n = map.0.nodes.len().max(1) as f32;
-    for node in map.0.nodes.iter() {
-        cx += node.position[0]; cy += node.position[1]; cz += node.position[2];
-        min_x = min_x.min(node.position[0]); max_x = max_x.max(node.position[0]);
-        min_y = min_y.min(node.position[1]); max_y = max_y.max(node.position[1]);
-    }
-    let center = Vec3::new(cx / n, cz / n, -cy / n);
-    let span = ((max_x - min_x).max(max_y - min_y)).max(5.0);
-
-    // Camera: elevated view looking down at map center
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(center.x, span * 1.2, center.z + span * 0.8)
-            .looking_at(center, Vec3::Y),
     ));
 
     if !draw.node_spheres { return; }

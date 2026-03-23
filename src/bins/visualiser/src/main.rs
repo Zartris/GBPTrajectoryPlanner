@@ -3,6 +3,7 @@ mod ws_client;
 mod map_scene;
 mod robot_render;
 mod ui;
+mod camera;
 
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
@@ -13,6 +14,7 @@ use bevy_egui::EguiPlugin;
 use serde::Deserialize;
 use state::{DrawConfig, MapRes, RobotStates, WsInbox, WsOutbox};
 use map_scene::MapScenePlugin;
+use camera::CameraPlugin;
 use robot_render::RobotRenderPlugin;
 use ui::UiPlugin;
 use tracing_subscriber::EnvFilter;
@@ -130,12 +132,23 @@ fn main() {
         .insert_resource(WsOutbox(outbox))
         .add_systems(Startup, log_gpu_info)
         .add_plugins(MapScenePlugin)
+        .add_plugins(CameraPlugin)
         .add_plugins(RobotRenderPlugin)
         .add_plugins(UiPlugin)
+        .add_systems(Update, auto_screenshot)
         .run();
 
     // App::run() blocks until exit. Set the WS shutdown flag so the background
     // thread stops its reconnect loop and the process can exit cleanly.
     ws_shutdown.store(true, Ordering::Relaxed);
     tracing::info!("app exited, WS client shutdown flag set");
+}
+fn auto_screenshot(mut commands: Commands, time: Res<Time>, mut done: Local<bool>) {
+    if *done { return; }
+    if time.elapsed_secs() > 2.0 {
+        *done = true;
+        commands.spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+            .observe(bevy::render::view::screenshot::save_to_disk(
+                "/repo/.worktrees/m6a-visualiser-overhaul/screenshot.png"));
+    }
 }
