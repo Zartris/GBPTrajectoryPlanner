@@ -317,7 +317,9 @@ fn camera_input_system(
 // ── Transform application ───────────────────────────────────────────────────
 
 const FOLLOW_P_GAIN: f32 = 5.0;
-const FOLLOW_OFFSET: Vec3 = Vec3::new(0.0, 3.0, 4.0);
+/// Offset from robot position: (right, up, behind) in Bevy world space.
+/// Must be large enough to see the track from above (robots can be at Y ≈ -4 in Bevy space).
+const FOLLOW_OFFSET: Vec3 = Vec3::new(0.0, 8.0, 6.0);
 
 fn apply_camera_transform(
     state: Res<CameraState>,
