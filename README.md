@@ -163,3 +163,25 @@ See [PROBE_GUIDE.md](PROBE_GUIDE.md) for WSL2 USB passthrough setup.
 ## License
 
 See [LICENSE](LICENSE) for details.
+
+
+
+
+
+Then test:
+
+Feature	How to test
+Orbit camera	Left-drag to rotate, scroll to zoom, right-drag to pan focus
+Pan camera	Press C to toggle to Pan mode, use WASD/arrows
+Follow camera	Press Tab to cycle through robots, Escape to exit
+Camera reset	Press R to return to default overhead view
+Draw toggles	Expand "Draw" section in Control panel, toggle checkboxes
+Bulk buttons	Click None/All/Flip/Reset below the checkboxes
+Gizmo master	Toggle "Gizmos" checkbox — disables all gizmo lines
+IR factor colors	Factor lines should be red→yellow→green based on proximity
+Path traces	Enable "Path traces" — colored trails behind each robot
+Uncertainty bars	Enable "Uncertainty bars" — vertical bars at belief positions
+Robot colliders	Enable "Robot colliders" — wireframe boxes around robots
+Metrics (F2)	Press F2 — shows FPS, robot count, IR factors, etc.
+Inspector (F1)	Press F1 — opens Bevy entity/resource browser
+Infinite grid	Enable "Infinite grid" — XZ reference grid
