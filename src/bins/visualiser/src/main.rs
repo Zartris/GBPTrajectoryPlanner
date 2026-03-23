@@ -5,6 +5,8 @@ mod camera;
 mod robot_render;
 mod ui;
 mod vis_api;
+mod vis_events;
+mod vis_event_systems;
 mod addons;
 
 use std::collections::VecDeque;
