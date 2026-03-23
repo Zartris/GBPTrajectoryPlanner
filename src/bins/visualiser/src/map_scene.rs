@@ -1,8 +1,28 @@
 // src/bins/visualiser/src/map_scene.rs
 use bevy::prelude::*;
 use bevy::gizmos::config::{GizmoConfigStore, DefaultGizmoConfigGroup, GizmoLineConfig};
+use bevy_infinite_grid::{InfiniteGridBundle, InfiniteGridPlugin, InfiniteGridSettings};
 use gbp_map::map::{EdgeGeometry, EdgeId, NodeType};
-use crate::state::{DrawConfig, MapRes};
+use crate::state::{DrawConfig, MapRes, NodeSphere, PhysicalTrackMesh, MainlinesMesh, MarkersMesh};
+
+/// Marker component for the infinite grid entity.
+#[derive(Component)]
+pub struct InfiniteGridMarker;
+
+/// Axis-aligned bounding box and derived camera-placement helpers for the loaded map.
+// min/max reserved for future grid bounds clamping
+#[allow(dead_code)]
+#[derive(Resource, Debug, Clone)]
+pub struct MapBounds {
+    /// World-space centre of all map nodes (Bevy Y-up coordinates).
+    pub center: Vec3,
+    /// Max of (x-span, z-span), at least 5.0. Useful for setting initial camera distance.
+    pub span: f32,
+    /// Min corner of the bounding box.
+    pub min: Vec3,
+    /// Max corner of the bounding box.
+    pub max: Vec3,
+}
 
 /// Cached polylines for each edge — computed once at startup, drawn every frame.
 #[derive(Resource)]
@@ -21,8 +41,19 @@ pub struct MapScenePlugin;
 
 impl Plugin for MapScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (configure_gizmos, spawn_map_scene, spawn_environment_stl, build_edge_polylines).chain())
-           .add_systems(Update, draw_edge_gizmos);
+        app.add_plugins(InfiniteGridPlugin)
+           .add_systems(
+                Startup,
+                (
+                    configure_gizmos,
+                    compute_map_bounds,
+                    spawn_map_scene,
+                    spawn_environment_stl,
+                    build_edge_polylines,
+                    spawn_infinite_grid,
+                ).chain(),
+           )
+           .add_systems(Update, (draw_edge_gizmos, sync_draw_visibility, sync_infinite_grid_visibility));
     }
 }
 
@@ -57,8 +88,28 @@ pub fn midpoint(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [(a[0]+b[0])/2.0, (a[1]+b[1])/2.0, (a[2]+b[2])/2.0]
 }
 
-/// Spawn camera, lights, and node spheres.
-fn spawn_map_scene(
+/// Compute and insert MapBounds from the loaded map. Runs before spawn_map_scene.
+pub fn compute_map_bounds(mut commands: Commands, map: Res<MapRes>) {
+    let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
+    let (mut min_y, mut max_y) = (f32::MAX, f32::MIN);
+    let (mut cx, mut cy, mut cz) = (0.0f32, 0.0f32, 0.0f32);
+    let n = map.0.nodes.len().max(1) as f32;
+    for node in map.0.nodes.iter() {
+        let [x, y, z] = node.position;
+        cx += x; cy += y; cz += z;
+        min_x = min_x.min(x); max_x = max_x.max(x);
+        min_y = min_y.min(y); max_y = max_y.max(y);
+    }
+    // Map coords (x, y, z) → Bevy (x, z, -y).
+    let center = Vec3::new(cx / n, cz / n, -cy / n);
+    let span = ((max_x - min_x).max(max_y - min_y)).max(5.0);
+    let min_bevy = Vec3::new(min_x, 0.0, -max_y);
+    let max_bevy = Vec3::new(max_x, 0.0, -min_y);
+    commands.insert_resource(MapBounds { center, span, min: min_bevy, max: max_bevy });
+}
+
+/// Spawn lights and node spheres. Camera is handled by CameraPlugin.
+pub fn spawn_map_scene(
     mut commands: Commands,
     map: Res<MapRes>,
     draw: Res<DrawConfig>,
@@ -78,30 +129,9 @@ fn spawn_map_scene(
         Transform::from_xyz(10.0, 20.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    // Compute map bounding box for camera placement
-    let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
-    let (mut min_y, mut max_y) = (f32::MAX, f32::MIN);
-    let (mut cx, mut cy, mut cz) = (0.0f32, 0.0f32, 0.0f32);
-    let n = map.0.nodes.len().max(1) as f32;
-    for node in map.0.nodes.iter() {
-        cx += node.position[0]; cy += node.position[1]; cz += node.position[2];
-        min_x = min_x.min(node.position[0]); max_x = max_x.max(node.position[0]);
-        min_y = min_y.min(node.position[1]); max_y = max_y.max(node.position[1]);
-    }
-    let center = Vec3::new(cx / n, cz / n, -cy / n);
-    let span = ((max_x - min_x).max(max_y - min_y)).max(5.0);
-
-    // Camera: elevated view looking down at map center
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(center.x, span * 1.2, center.z + span * 0.8)
-            .looking_at(center, Vec3::Y),
-    ));
-
-    if !draw.node_spheres { return; }
-
-    // Node spheres with emissive glow
+    // Node spheres with emissive glow — always spawned; visibility controlled at runtime
     let sphere_mesh = meshes.add(Sphere::new(0.2).mesh().ico(2).unwrap());
+    let ns_vis = if draw.node_spheres { Visibility::Visible } else { Visibility::Hidden };
 
     for node in map.0.nodes.iter() {
         let color = node_color(node.node_type);
@@ -116,6 +146,8 @@ fn spawn_map_scene(
             Mesh3d(sphere_mesh.clone()),
             MeshMaterial3d(mat),
             Transform::from_xyz(x, z, -y),
+            NodeSphere,
+            ns_vis,
         ));
     }
 }
@@ -204,31 +236,31 @@ fn spawn_environment_stl(
     };
 
     // Physical track — grey (opaque for performance: 56K tris)
-    if draw.physical_track {
-        commands.spawn((
-            Mesh3d(asset_server.load(PHYSICAL_TRACK_STL)),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::srgb(0.45, 0.45, 0.45),
-                ..default()
-            })),
-            stl_transform,
-        ));
-    }
+    // Always spawned; visibility controlled at runtime via PhysicalTrackMesh marker.
+    commands.spawn((
+        Mesh3d(asset_server.load(PHYSICAL_TRACK_STL)),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.45, 0.45, 0.45),
+            ..default()
+        })),
+        stl_transform,
+        PhysicalTrackMesh,
+        if draw.physical_track { Visibility::Visible } else { Visibility::Hidden },
+    ));
 
     // Magnetic mainlines — dark blue (opaque for performance: 86K tris)
-    if draw.magnetic_mainlines {
-        commands.spawn((
-            Mesh3d(asset_server.load(MAGNETIC_MAINLINES_STL)),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::srgb(0.1, 0.1, 0.7),
-                ..default()
-            })),
-            stl_transform,
-        ));
-    }
+    commands.spawn((
+        Mesh3d(asset_server.load(MAGNETIC_MAINLINES_STL)),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.1, 0.1, 0.7),
+            ..default()
+        })),
+        stl_transform,
+        MainlinesMesh,
+        if draw.magnetic_mainlines { Visibility::Visible } else { Visibility::Hidden },
+    ));
 
     // Magnetic markers — yellow
-    if draw.magnetic_markers {
     commands.spawn((
         Mesh3d(asset_server.load(MAGNETIC_MARKERS_STL)),
         MeshMaterial3d(materials.add(StandardMaterial {
@@ -236,8 +268,71 @@ fn spawn_environment_stl(
             ..default()
         })),
         stl_transform,
+        MarkersMesh,
+        if draw.magnetic_markers { Visibility::Visible } else { Visibility::Hidden },
     ));
-    } // magnetic_markers
+}
+
+/// Sync Visibility on marker entities when DrawConfig changes.
+/// Runs every Update frame but is a no-op unless DrawConfig was mutated.
+fn sync_draw_visibility(
+    draw: Res<DrawConfig>,
+    mut node_spheres: Query<&mut Visibility, With<NodeSphere>>,
+    mut track_meshes: Query<&mut Visibility, (With<PhysicalTrackMesh>, Without<NodeSphere>)>,
+    mut mainlines_meshes: Query<&mut Visibility, (With<MainlinesMesh>, Without<NodeSphere>, Without<PhysicalTrackMesh>)>,
+    mut markers_meshes: Query<&mut Visibility, (With<MarkersMesh>, Without<NodeSphere>, Without<PhysicalTrackMesh>, Without<MainlinesMesh>)>,
+) {
+    if !draw.is_changed() { return; }
+
+    let ns_vis = if draw.node_spheres { Visibility::Visible } else { Visibility::Hidden };
+    for mut vis in &mut node_spheres {
+        *vis = ns_vis;
+    }
+
+    let track_vis = if draw.physical_track { Visibility::Visible } else { Visibility::Hidden };
+    for mut vis in &mut track_meshes {
+        *vis = track_vis;
+    }
+
+    let mainlines_vis = if draw.magnetic_mainlines { Visibility::Visible } else { Visibility::Hidden };
+    for mut vis in &mut mainlines_meshes {
+        *vis = mainlines_vis;
+    }
+
+    let markers_vis = if draw.magnetic_markers { Visibility::Visible } else { Visibility::Hidden };
+    for mut vis in &mut markers_meshes {
+        *vis = markers_vis;
+    }
+}
+
+/// Spawn the infinite grid entity. Visibility is driven by DrawConfig at startup.
+fn spawn_infinite_grid(mut commands: Commands, draw: Res<DrawConfig>) {
+    let vis = if draw.infinite_grid { Visibility::Visible } else { Visibility::Hidden };
+    commands.spawn((
+        InfiniteGridBundle {
+            settings: InfiniteGridSettings {
+                minor_line_color: bevy::color::Color::srgba(0.3, 0.3, 0.3, 0.3),
+                major_line_color: bevy::color::Color::srgba(0.5, 0.5, 0.5, 0.5),
+                fadeout_distance: 200.0,
+                ..Default::default()
+            },
+            visibility: vis,
+            ..Default::default()
+        },
+        InfiniteGridMarker,
+    ));
+}
+
+/// Sync infinite grid Visibility when DrawConfig changes.
+fn sync_infinite_grid_visibility(
+    draw: Res<DrawConfig>,
+    mut grids: Query<&mut Visibility, With<InfiniteGridMarker>>,
+) {
+    if !draw.is_changed() { return; }
+    let vis = if draw.infinite_grid { Visibility::Visible } else { Visibility::Hidden };
+    for mut v in &mut grids {
+        *v = vis;
+    }
 }
 
 #[cfg(test)]

@@ -1,8 +1,10 @@
 // src/bins/visualiser/src/ui.rs
 use bevy::prelude::*;
+use tracing::info;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore};
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
-use crate::state::{RobotStates, WsOutbox};
+use crate::state::{DrawConfig, InspectorVisible, MetricsVisible, RobotStates, WsOutbox};
 
 /// Shared pause flag.
 #[derive(Resource, Default)]
@@ -44,9 +46,32 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
+           .add_plugins(bevy::diagnostic::EntityCountDiagnosticsPlugin::default())
            .init_resource::<SimPaused>()
            .init_resource::<BackendStats>()
+           
+           .init_resource::<MetricsVisible>()
+           .init_resource::<InspectorVisible>()
+           // Toggle runs in Update (once per frame) — NOT in EguiPrimaryContextPass
+           // which runs multiple times per frame (multipass) and would double-toggle.
+           .add_systems(Update, toggle_overlays)
            .add_systems(EguiPrimaryContextPass, draw_hud);
+    }
+}
+
+/// Toggle F1/F2 overlays. Runs in Update (once per frame).
+fn toggle_overlays(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut metrics_vis: ResMut<MetricsVisible>,
+    mut inspector_vis: ResMut<InspectorVisible>,
+) {
+    if keyboard.just_pressed(KeyCode::F1) {
+        inspector_vis.0 = !inspector_vis.0;
+        info!("[ui] F1 toggled inspector: {}", inspector_vis.0);
+    }
+    if keyboard.just_pressed(KeyCode::F2) {
+        metrics_vis.0 = !metrics_vis.0;
+        info!("[ui] F2 toggled metrics: {}", metrics_vis.0);
     }
 }
 
@@ -65,10 +90,23 @@ fn draw_hud(
     diagnostics: Res<DiagnosticsStore>,
     backend: Res<BackendStats>,
     outbox: Res<WsOutbox>,
+    mut draw: ResMut<DrawConfig>,
+    mut gizmo_store: ResMut<GizmoConfigStore>,
+    _metrics_vis: Res<MetricsVisible>,
+    _inspector_vis: Res<InspectorVisible>,
 ) -> Result {
     let ctx = ctxs.ctx_mut()?;
 
-    // FPS / Performance overlay (top-left, minimal)
+    // ── Global egui style — dark, clean, generous spacing ──────────────
+    ctx.style_mut(|s| {
+        s.visuals.window_shadow = egui::Shadow::NONE;
+        s.visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(30));
+        s.visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgba_premultiplied(15, 18, 35, 220);
+        s.spacing.item_spacing = egui::vec2(8.0, 5.0);
+        s.spacing.window_margin = egui::Margin::same(12);
+    });
+
+    // FPS / Performance overlay (top-right, minimal)
     let fps = diagnostics
         .get(&FrameTimeDiagnosticsPlugin::FPS)
         .and_then(|d| d.smoothed())
@@ -80,53 +118,239 @@ fn draw_hud(
         .unwrap_or(0.0);
 
     egui::Window::new("Performance")
-        .anchor(egui::Align2::RIGHT_TOP, [-5.0, 5.0])
+        .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
         .title_bar(false)
         .resizable(false)
         .show(ctx, |ui| {
-            ui.label(format!("FPS: {:.0}  ({:.1}ms)", fps, frame_ms));
-            ui.label(format!("Backend: {:.0} Hz", backend.msg_hz));
+            ui.label(egui::RichText::new(format!("FPS: {:.0}  ({:.1}ms)", fps, frame_ms))
+                .monospace().size(11.0).color(egui::Color32::from_rgb(180, 200, 220)));
+            ui.label(egui::RichText::new(format!("Backend: {:.0} Hz", backend.msg_hz))
+                .monospace().size(11.0).color(egui::Color32::from_rgb(180, 200, 220)));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("F1 Inspector  ·  F2 Metrics")
+                .size(10.0).color(egui::Color32::from_rgb(100, 110, 130)));
         });
 
-    // Global control panel
-    egui::Window::new("Control").show(ctx, |ui| {
-        let label = if paused.0 { "Resume" } else { "Pause" };
-        if ui.button(label).clicked() {
+    // ── Control Panel ─────────────────────────────────────────────────
+    let accent = egui::Color32::from_rgb(100, 200, 220); // teal accent
+    let dim = egui::Color32::from_rgb(120, 130, 150);    // muted text
+    let heading_color = egui::Color32::from_rgb(200, 210, 230);
+
+    egui::Window::new(egui::RichText::new("◈  Control").color(heading_color).size(14.0))
+        .default_width(220.0)
+        .show(ctx, |ui| {
+        // ── Simulation ──
+        ui.add_space(2.0);
+        let btn_text = if paused.0 { "▶  Resume" } else { "⏸  Pause" };
+        if ui.button(egui::RichText::new(btn_text).size(13.0)).clicked() {
             paused.0 = !paused.0;
             let cmd = if paused.0 { r#"{"command":"pause"}"# } else { r#"{"command":"resume"}"# };
             outbox.0.lock().unwrap_or_else(|e| e.into_inner()).push_back(cmd.to_string());
         }
+        ui.add_space(2.0);
+        ui.label(egui::RichText::new(format!("⬡  {} robots connected", states.0.len()))
+            .color(dim).size(11.0));
+
+        ui.add_space(6.0);
         ui.separator();
-        ui.label(format!("Connected: {} robots", states.0.len()));
+        ui.add_space(4.0);
+
+        // ── Draw Toggles ──
+        egui::CollapsingHeader::new(egui::RichText::new("Draw Layers").color(accent).strong().size(12.0))
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.add_space(4.0);
+
+                // Environment group
+                section_heading(ui, "Environment", heading_color);
+                styled_toggle(ui, &mut draw.physical_track,     "Physical track");
+                styled_toggle(ui, &mut draw.magnetic_mainlines, "Magnetic mainlines");
+                styled_toggle(ui, &mut draw.magnetic_markers,   "Magnetic markers");
+                styled_toggle(ui, &mut draw.node_spheres,       "Node spheres");
+                styled_toggle(ui, &mut draw.edge_lines,         "Edge lines");
+                styled_toggle(ui, &mut draw.infinite_grid,      "Infinite grid");
+
+                ui.add_space(6.0);
+
+                // Robots group
+                section_heading(ui, "Robots", heading_color);
+                styled_toggle(ui, &mut draw.robots,              "Robots");
+                styled_toggle(ui, &mut draw.planned_paths,       "Planned paths");
+                styled_toggle(ui, &mut draw.belief_tubes,        "Belief tubes");
+                styled_toggle(ui, &mut draw.factor_links,        "Factor links");
+                styled_toggle(ui, &mut draw.robot_colliders,     "Robot colliders");
+                styled_toggle(ui, &mut draw.uncertainty_bars,    "Uncertainty bars");
+                styled_toggle(ui, &mut draw.path_traces,         "Path traces");
+                styled_toggle(ui, &mut draw.comm_radius_circles, "Comm radius");
+                styled_toggle(ui, &mut draw.ir_safety_distance,  "IR safety dist");
+                styled_toggle(ui, &mut draw.collision_markers,   "Collisions");
+
+                ui.add_space(6.0);
+
+                // Gizmo master
+                section_heading(ui, "Gizmos", heading_color);
+                let (gizmo_cfg, _) = gizmo_store.config_mut::<DefaultGizmoConfigGroup>();
+                styled_toggle(ui, &mut gizmo_cfg.enabled, "All gizmos");
+
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                // Bulk buttons
+                ui.horizontal(|ui| {
+                    for (label, action) in [("None", false), ("All", true)] {
+                        if ui.small_button(label).clicked() {
+                            set_all_draw(&mut draw, action);
+                        }
+                    }
+                    if ui.small_button("Flip").clicked() {
+                        flip_all_draw(&mut draw);
+                    }
+                    if ui.small_button("Reset").clicked() {
+                        *draw = DrawConfig::default();
+                    }
+                });
+            });
     });
 
-    // Per-robot side panels
+    // ── Per-robot panels ────────────────────────────────────────────
+    let robot_colors = [
+        egui::Color32::from_rgb(30, 180, 255),  // blue
+        egui::Color32::from_rgb(255, 120, 40),   // orange
+        egui::Color32::from_rgb(60, 255, 120),   // green
+        egui::Color32::from_rgb(255, 60, 200),   // pink
+    ];
     let mut sorted_ids: Vec<u32> = states.0.keys().copied().collect();
     sorted_ids.sort();
     for id in sorted_ids {
         if let Some(state) = states.0.get(&id) {
-            egui::Window::new(format!("Robot {}", id)).show(ctx, |ui| {
-                ui.label(format!("cmd_v:   {}", fmt_velocity(state.velocity)));
-                ui.label(format!("gbp_v:   {}", fmt_velocity(state.raw_gbp_velocity)));
-                ui.label(format!("Edge:    {:?} s={:.2}", state.current_edge, state.position_s));
+            let rc = robot_colors[(id as usize) % robot_colors.len()];
+            egui::Window::new(
+                egui::RichText::new(format!("◈  Robot {}", id)).color(rc).size(13.0)
+            ).show(ctx, |ui| {
+                stat_row(ui, "cmd_v", &fmt_velocity(state.velocity), dim);
+                stat_row(ui, "gbp_v", &fmt_velocity(state.raw_gbp_velocity), dim);
+                stat_row(ui, "edge",  &format!("{:?}  s={:.2}", state.current_edge, state.position_s), dim);
                 let dist_str = if state.min_neighbour_dist_3d < 100.0 {
                     format!("{:.2}m", state.min_neighbour_dist_3d)
-                } else {
-                    "—".into()
-                };
-                ui.label(format!("dist3d:  {}", dist_str));
-                ui.label(fmt_factor_count(state.active_factor_count));
+                } else { "—".into() };
+                stat_row(ui, "dist3d", &dist_str, dim);
+                stat_row(ui, "factors", &fmt_factor_count(state.active_factor_count), dim);
             });
         }
     }
 
     if states.0.is_empty() {
-        egui::Window::new("Status").show(ctx, |ui| {
-            ui.label("No robots connected");
+        egui::Window::new(egui::RichText::new("◈  Status").color(dim).size(13.0))
+            .show(ctx, |ui| {
+            ui.label(egui::RichText::new("No robots connected").color(dim).italics());
         });
     }
 
     Ok(())
+}
+
+// ── UI Helpers ──────────────────────────────────────────────────────────────
+
+/// Subcategory heading — uppercase, muted, with a thin line beneath.
+/// Distinct from colored category headers but clearly separates groups.
+fn section_heading(ui: &mut egui::Ui, text: &str, _color: egui::Color32) {
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new("─")
+                .color(egui::Color32::from_rgb(60, 65, 80))
+                .size(10.0)
+        );
+        ui.label(
+            egui::RichText::new(text.to_uppercase())
+                .color(egui::Color32::from_rgb(160, 170, 190))
+                .size(9.5)
+                .strong()
+        );
+    });
+    ui.add(egui::Separator::default().spacing(1.0));
+}
+
+/// Toggle switch row: label on left, pill-shaped toggle on right (like MAGICS).
+fn styled_toggle(ui: &mut egui::Ui, value: &mut bool, label: &str) {
+    let text_color = if *value {
+        egui::Color32::from_rgb(210, 220, 235)
+    } else {
+        egui::Color32::from_rgb(130, 135, 150)
+    };
+
+    ui.horizontal(|ui| {
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(label).color(text_color).size(11.0));
+
+        // Push toggle to right edge
+        let remaining = ui.available_width() - 32.0;
+        if remaining > 0.0 { ui.add_space(remaining); }
+
+        // Draw pill-shaped toggle switch
+        toggle_switch(ui, value);
+    });
+}
+
+/// Custom pill-shaped toggle switch widget.
+fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+    let desired_size = egui::vec2(28.0, 14.0);
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+    }
+
+    let painter = ui.painter();
+    let radius = rect.height() / 2.0;
+
+    // Track background
+    let bg = if *on {
+        egui::Color32::from_rgb(60, 180, 140)  // teal-green when on
+    } else {
+        egui::Color32::from_rgb(55, 60, 75)     // dark grey when off
+    };
+    painter.rect_filled(rect, radius, bg);
+
+    // Circle knob
+    let knob_x = if *on {
+        rect.right() - radius
+    } else {
+        rect.left() + radius
+    };
+    let knob_center = egui::pos2(knob_x, rect.center().y);
+    painter.circle_filled(knob_center, radius - 2.0, egui::Color32::WHITE);
+
+    response
+}
+
+/// Key-value stat row for robot panels.
+fn stat_row(ui: &mut egui::Ui, key: &str, value: &str, dim: egui::Color32) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(key).color(dim).monospace().size(10.5));
+        ui.label(egui::RichText::new(value).monospace().size(10.5));
+    });
+}
+
+fn set_all_draw(draw: &mut DrawConfig, on: bool) {
+    draw.physical_track = on; draw.magnetic_mainlines = on; draw.magnetic_markers = on;
+    draw.node_spheres = on; draw.edge_lines = on; draw.infinite_grid = on;
+    draw.robots = on; draw.planned_paths = on; draw.belief_tubes = on;
+    draw.factor_links = on; draw.robot_colliders = on; draw.uncertainty_bars = on;
+    draw.path_traces = on; draw.comm_radius_circles = on;
+    draw.ir_safety_distance = on; draw.collision_markers = on;
+}
+
+fn flip_all_draw(draw: &mut DrawConfig) {
+    draw.physical_track = !draw.physical_track; draw.magnetic_mainlines = !draw.magnetic_mainlines;
+    draw.magnetic_markers = !draw.magnetic_markers; draw.node_spheres = !draw.node_spheres;
+    draw.edge_lines = !draw.edge_lines; draw.infinite_grid = !draw.infinite_grid;
+    draw.robots = !draw.robots; draw.planned_paths = !draw.planned_paths;
+    draw.belief_tubes = !draw.belief_tubes; draw.factor_links = !draw.factor_links;
+    draw.robot_colliders = !draw.robot_colliders; draw.uncertainty_bars = !draw.uncertainty_bars;
+    draw.path_traces = !draw.path_traces; draw.comm_radius_circles = !draw.comm_radius_circles;
+    draw.ir_safety_distance = !draw.ir_safety_distance; draw.collision_markers = !draw.collision_markers;
 }
 
 #[cfg(test)]

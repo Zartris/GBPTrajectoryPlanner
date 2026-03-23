@@ -2,7 +2,7 @@
 use bevy::prelude::*;
 use gbp_map::map::{Map, EdgeId};
 use gbp_map::MAX_HORIZON;
-use crate::state::{DrawConfig, MapRes, RobotState, RobotStates, WsInbox};
+use crate::state::{DrawConfig, MapRes, RobotStates, TraceHistory, WsInbox};
 use crate::ui::SimPaused;
 use tracing::warn;
 
@@ -10,7 +10,11 @@ pub struct RobotRenderPlugin;
 
 impl Plugin for RobotRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (drain_ws_inbox, spawn_new_robot_meshes, update_robot_transforms, draw_planned_path, draw_belief_tubes, draw_factor_links).chain());
+        app.init_resource::<TraceHistory>()
+           .add_systems(Update, (drain_ws_inbox, spawn_new_robot_meshes, update_robot_transforms, draw_planned_path, draw_belief_tubes, draw_uncertainty_bars, draw_factor_links).chain())
+           .add_systems(Update, (sample_trace, draw_traces).chain())
+           .add_systems(Update, sync_robot_visibility)
+           .add_systems(Update, draw_robot_colliders);
     }
 }
 
@@ -146,8 +150,8 @@ fn spawn_new_robot_meshes(
     query: Query<&RobotArrow>,
     draw: Res<DrawConfig>,
 ) {
-    if !draw.robots { return; }
     let existing: std::collections::HashSet<u32> = query.iter().map(|a| a.robot_id).collect();
+    let robot_vis = if draw.robots { Visibility::Visible } else { Visibility::Hidden };
 
     for &id in states.0.keys() {
         if existing.contains(&id) { continue; }
@@ -162,6 +166,7 @@ fn spawn_new_robot_meshes(
             })),
             Transform::IDENTITY,
             RobotArrow { robot_id: id },
+            robot_vis,
         ));
     }
 }
@@ -177,7 +182,7 @@ fn drain_ws_inbox(
     let mut q = inbox.0.lock().unwrap_or_else(|e| e.into_inner());
     while let Some(msg) = q.pop_front() {
         backend.record_message();
-        let state = states.0.entry(msg.robot_id).or_insert_with(RobotState::default);
+        let state = states.0.entry(msg.robot_id).or_default();
         state.update_from_msg(&msg);
     }
 }
@@ -276,8 +281,55 @@ fn draw_belief_tubes(
     }
 }
 
-/// Draw red lines between paired variable positions at the same timestep k.
+/// Draw 1D vertical bars at each belief variable position, with height proportional to uncertainty.
+fn draw_uncertainty_bars(
+    map: Res<MapRes>,
+    states: Res<RobotStates>,
+    draw: Res<DrawConfig>,
+    mut gizmos: Gizmos,
+) {
+    if !draw.uncertainty_bars { return; }
+
+    for (robot_id, state) in &states.0 {
+        let (r, g, b) = ROBOT_COLORS[(*robot_id as usize) % ROBOT_COLORS.len()];
+        let edge_ids: Vec<EdgeId> = state.planned_edges.iter().copied().collect();
+        let positions = belief_tube_positions_trajectory(&map.0, &edge_ids, &state.belief_means);
+
+        for (i, pos) in positions.iter().enumerate() {
+            let variance = state.belief_vars[i].max(0.0);
+            let height = variance.sqrt().clamp(0.01, 3.0);
+
+            // pos is already in Bevy space (belief_tube_positions_trajectory returns Bevy coords)
+            let base = Vec3::from(*pos) + Vec3::Y * 0.15;
+            let top = base + Vec3::Y * height;
+
+            // Draw vertical bar with semi-transparent color
+            gizmos.line(base, top, Color::srgba(r, g, b, 0.6));
+        }
+    }
+}
+
+/// Compute a 3-stop color gradient for IR factor lines based on 3D distance.
+///
+/// Gradient: red (dist <= d_safe) → yellow (dist ≈ 1.5 * d_safe) → green (dist >= 2 * d_safe).
+/// `t` is normalized to [0, 1] over the range [d_safe, 2 * d_safe].
+fn ir_factor_color(dist: f32, d_safe: f32) -> Color {
+    let d = if d_safe > 0.0 { d_safe } else { f32::EPSILON };
+    let t = ((dist - d) / d).clamp(0.0, 1.0);
+    if t < 0.5 {
+        // red → yellow: lerp R=1, G: 0→1, B=0
+        let g = t * 2.0;
+        Color::srgba(1.0, g, 0.0, 0.7)
+    } else {
+        // yellow → green: lerp R: 1→0, G=1, B=0
+        let r = 1.0 - (t - 0.5) * 2.0;
+        Color::srgba(r, 1.0, 0.0, 0.7)
+    }
+}
+
+/// Draw colored lines between paired variable positions at the same timestep k.
 /// For each pair of robots with active IR factors, connects their belief dots.
+/// Color encodes proximity: red (inside d_safe) → yellow → green (safe distance).
 fn draw_factor_links(
     map: Res<MapRes>,
     states: Res<RobotStates>,
@@ -285,9 +337,9 @@ fn draw_factor_links(
     mut gizmos: Gizmos,
 ) {
     if !draw.factor_links { return; }
-    // Collect robots with active factors: their belief positions and active timestep set
+    // Collect robots with active factors: their belief positions, active timestep set, and 3D pos
     let up = Vec3::new(0.0, 0.15, 0.0);
-    let mut robot_data: std::vec::Vec<(u32, std::vec::Vec<Vec3>, std::vec::Vec<u8>)> = std::vec::Vec::new();
+    let mut robot_data: std::vec::Vec<(u32, std::vec::Vec<Vec3>, std::vec::Vec<u8>, [f32; 3])> = std::vec::Vec::new();
 
     for (&id, state) in &states.0 {
         if state.active_factor_count == 0 { continue; }
@@ -295,24 +347,118 @@ fn draw_factor_links(
         let pts = belief_tube_positions_trajectory(&map.0, &edge_ids, &state.belief_means);
         let world_pts: std::vec::Vec<Vec3> = pts.iter().map(|p| Vec3::from(*p) + up).collect();
         let active_ks: std::vec::Vec<u8> = state.active_ir_timesteps.iter().copied().collect();
-        robot_data.push((id, world_pts, active_ks));
+        robot_data.push((id, world_pts, active_ks, state.pos_3d));
     }
 
-    // Draw red lines only at timesteps where EITHER robot has an active IR factor
+    let d_safe = draw.ir_d_safe;
+
+    // Draw lines at timesteps where EITHER robot has an active IR factor.
+    // Color is based on the current 3D distance between the robot pair (min_neighbour_dist_3d
+    // is per-robot, so we use the straight-line distance between their current 3D positions).
     for i in 0..robot_data.len() {
         for j in (i + 1)..robot_data.len() {
+            // Compute current 3D distance between the two robots (map-space, metric)
+            let pa = robot_data[i].3;
+            let pb = robot_data[j].3;
+            let dx = pa[0] - pb[0];
+            let dy = pa[1] - pb[1];
+            let dz = pa[2] - pb[2];
+            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+            let color = ir_factor_color(dist, d_safe);
+
             let k_max = robot_data[i].1.len().min(robot_data[j].1.len());
             for k in 0..k_max {
                 let k_u8 = k as u8;
                 let active_i = robot_data[i].2.contains(&k_u8);
                 let active_j = robot_data[j].2.contains(&k_u8);
                 if active_i || active_j {
-                    let a = robot_data[i].1[k];
-                    let b = robot_data[j].1[k];
-                    gizmos.line(a, b, Color::srgba(1.0, 0.2, 0.2, 0.6));
+                    let pos_a = robot_data[i].1[k];
+                    let pos_b = robot_data[j].1[k];
+                    gizmos.line(pos_a, pos_b, color);
+
+                    // Safety distance marker: small sphere at the midpoint, colored by danger level
+                    if draw.ir_safety_distance {
+                        let mid = (pos_a + pos_b) / 2.0;
+                        let danger_color = if dist < d_safe {
+                            Color::srgba(1.0, 0.0, 0.0, 0.6)
+                        } else {
+                            Color::srgba(1.0, 0.65, 0.0, 0.5)
+                        };
+                        gizmos.sphere(Isometry3d::from_translation(mid), 0.1, danger_color);
+                    }
                 }
             }
         }
+    }
+}
+
+/// Sample each robot's current Bevy-space position into the TraceHistory ring buffer.
+/// Called every frame; pruning removes robots silent for more than 5 seconds.
+fn sample_trace(
+    states: Res<RobotStates>,
+    mut traces: ResMut<TraceHistory>,
+    time: Res<Time>,
+    draw: Res<DrawConfig>,
+) {
+    if !draw.path_traces { return; }
+    let now = time.elapsed_secs();
+    for (robot_id, state) in &states.0 {
+        // pos_3d is already in Bevy coords (same as robot_world_pos output)
+        let bevy_pos = Vec3::from(state.pos_3d);
+        traces.push(*robot_id, bevy_pos, now);
+    }
+    traces.prune_stale(now, 5.0);
+}
+
+/// Draw path trace lines for all robots when DrawConfig::path_traces is enabled.
+fn draw_traces(
+    mut gizmos: Gizmos,
+    traces: Res<TraceHistory>,
+    draw: Res<DrawConfig>,
+) {
+    if !draw.path_traces { return; }
+
+    for (robot_id, trace) in &traces.traces {
+        let (r, g, b) = ROBOT_COLORS
+            .get(*robot_id as usize % ROBOT_COLORS.len())
+            .copied()
+            .unwrap_or((0.5, 0.5, 0.5));
+        let color = Color::srgb(r, g, b);
+        // linestrip takes an iterator of Vec3 — no heap allocation needed
+        gizmos.linestrip(trace.iter().copied(), color);
+    }
+}
+
+/// Draw wireframe cuboid colliders at each robot's Transform, sized to the chassis dimensions.
+fn draw_robot_colliders(
+    draw: Res<DrawConfig>,
+    query: Query<(&Transform, &RobotArrow)>,
+    mut gizmos: Gizmos,
+) {
+    if !draw.robot_colliders { return; }
+
+    for (transform, arrow) in query.iter() {
+        let (r, g, b) = ROBOT_COLORS[arrow.robot_id as usize % ROBOT_COLORS.len()];
+        gizmos.cube(
+            Transform {
+                translation: transform.translation,
+                rotation: transform.rotation,
+                scale: Vec3::new(CHASSIS_WIDTH, CHASSIS_HEIGHT, CHASSIS_LENGTH),
+            },
+            Color::srgb(r, g, b),
+        );
+    }
+}
+
+/// Sync Visibility on RobotArrow entities when DrawConfig::robots changes.
+fn sync_robot_visibility(
+    draw: Res<DrawConfig>,
+    mut robots: Query<&mut Visibility, With<RobotArrow>>,
+) {
+    if !draw.is_changed() { return; }
+    let vis = if draw.robots { Visibility::Visible } else { Visibility::Hidden };
+    for mut v in &mut robots {
+        *v = vis;
     }
 }
 
