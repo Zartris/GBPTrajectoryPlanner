@@ -262,7 +262,7 @@ fn camera_input_system(
 
     // ── 4. Scroll zoom ──────────────────────────────────────────────────
     for ev in scroll_evr.read() {
-        if egui_over || matches!(state.mode, CameraMode::Follow(_)) {
+        if egui_over {
             continue;
         }
         let d = match ev.unit {
@@ -310,42 +310,47 @@ fn camera_input_system(
                 state.focus += right * speed * dt;
             }
         }
-        CameraMode::Follow(_) => {}
+        CameraMode::Follow(_) => {
+            // Allow orbit (yaw/pitch) and zoom around the followed robot
+            if left_pressed {
+                state.yaw -= cursor_delta.x * ORBIT_SENSITIVITY;
+                state.pitch = (state.pitch + cursor_delta.y * ORBIT_SENSITIVITY)
+                    .clamp(PITCH_MIN, PITCH_MAX);
+            }
+        }
     }
 }
 
 // ── Transform application ───────────────────────────────────────────────────
 
 const FOLLOW_P_GAIN: f32 = 5.0;
-/// Offset from robot position in Bevy world space (up and behind).
-const FOLLOW_OFFSET: Vec3 = Vec3::new(0.0, 5.0, 5.0);
+/// Default distance from robot in Follow mode.
+const FOLLOW_DISTANCE: f32 = 8.0;
 
 fn apply_camera_transform(
-    state: Res<CameraState>,
+    mut state: ResMut<CameraState>,
     mut camera: Single<&mut Transform, With<MainCamera>>,
     robot_states: Res<RobotStates>,
     time: Res<Time>,
-    mut follow_log: Local<f32>,
 ) {
-    *follow_log += time.delta_secs();
     match state.mode {
         CameraMode::Follow(rid) => {
             if let Some(rs) = robot_states.0.get(&rid) {
-                // pos_3d is ALREADY in Bevy coords (same as robot_world_pos output)
+                // pos_3d is already in Bevy coords
                 let rpos = Vec3::from(rs.pos_3d);
-                let desired = rpos + FOLLOW_OFFSET;
+                // Orbit around the robot using yaw/pitch/distance (same math as free orbit)
+                let dist = if state.distance < 1.0 { FOLLOW_DISTANCE } else { state.distance };
+                let (sy, cy) = state.yaw.sin_cos();
+                let (sp, cp) = state.pitch.sin_cos();
+                let offset = Vec3::new(sy * cp, sp, cy * cp) * dist;
+                let desired = rpos + offset;
+                // P-controller smooth follow
                 let alpha = (time.delta_secs() * FOLLOW_P_GAIN).min(1.0);
                 let pos = camera.translation.lerp(desired, alpha);
-                if *follow_log >= 1.0 {
-                    *follow_log = 0.0;
-                    info!("[cam] follow r{rid}: pos_3d={:?} bevy={rpos} desired={desired} cam={pos}", rs.pos_3d);
-                }
+                // Update focus to robot position for consistent orbit center
+                state.focus = rpos;
                 **camera = Transform::from_translation(pos).looking_at(rpos, Vec3::Y);
             } else {
-                if *follow_log >= 1.0 {
-                    *follow_log = 0.0;
-                    info!("[cam] follow r{rid}: robot NOT FOUND in RobotStates");
-                }
                 let pos = state.world_position();
                 **camera = Transform::from_translation(pos).looking_at(state.focus, Vec3::Y);
             }
