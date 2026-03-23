@@ -193,10 +193,16 @@ fn update_robot_transforms(
     states: Res<RobotStates>,
     mut query: Query<(&RobotArrow, &mut Transform)>,
 ) {
+    let mut logged = false;
     for (arrow, mut transform) in query.iter_mut() {
         if let Some(state) = states.0.get(&arrow.robot_id) {
             let pos = robot_world_pos(&map.0, state.current_edge, state.position_s);
             let tan = robot_tangent(&map.0, state.current_edge, state.position_s);
+            if !logged && arrow.robot_id == 0 {
+                logged = true;
+                tracing::info!("[mesh] r0: world_pos={pos:?} pos_3d={:?} edge={:?} s={:.2}",
+                    state.pos_3d, state.current_edge, state.position_s);
+            }
             // Lift chassis so bottom sits on track (half height above track surface)
             transform.translation = Vec3::from(pos) + Vec3::new(0.0, CHASSIS_HEIGHT / 2.0, 0.0);
             // Align chassis length (Z axis) along travel direction
@@ -403,9 +409,8 @@ fn sample_trace(
     if !draw.path_traces { return; }
     let now = time.elapsed_secs();
     for (robot_id, state) in &states.0 {
-        let p = state.pos_3d;
-        // Apply the same map→Bevy coordinate transform used elsewhere: (x, z, -y)
-        let bevy_pos = Vec3::new(p[0], p[2], -p[1]);
+        // pos_3d is already in Bevy coords (same as robot_world_pos output)
+        let bevy_pos = Vec3::from(state.pos_3d);
         traces.push(*robot_id, bevy_pos, now);
     }
     traces.prune_stale(now, 5.0);

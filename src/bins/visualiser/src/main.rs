@@ -197,13 +197,26 @@ fn main() {
     tracing::info!("app exited, WS client shutdown flag set");
 }
 
-fn auto_screenshot(mut commands: Commands, time: Res<Time>, mut done: Local<bool>) {
-    if *done { return; }
-    if time.elapsed_secs() > 2.0 {
-        *done = true;
-        let path = "/repo/.worktrees/m6a-visualiser-overhaul/screenshot.png";
-        tracing::info!("[debug] screenshot -> {path}");
-        commands.spawn(bevy::render::view::screenshot::Screenshot::primary_window())
-            .observe(bevy::render::view::screenshot::save_to_disk(path));
+fn auto_screenshot(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut cam: ResMut<camera::CameraState>,
+    mut step: Local<u8>,
+) {
+    let t = time.elapsed_secs();
+    match *step {
+        0 if t > 2.0 => {
+            cam.mode = camera::CameraMode::Follow(0);
+            tracing::info!("[auto] follow robot 0");
+            *step = 1;
+        }
+        1 if t > 5.0 => {
+            let path = "/repo/.worktrees/m6a-visualiser-overhaul/screenshot.png";
+            tracing::info!("[auto] screenshot -> {path}");
+            commands.spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+                .observe(bevy::render::view::screenshot::save_to_disk(path));
+            *step = 2;
+        }
+        _ => {}
     }
 }
