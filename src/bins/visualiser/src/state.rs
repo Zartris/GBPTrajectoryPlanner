@@ -6,6 +6,14 @@ use gbp_comms::RobotStateMsg;
 use gbp_map::map::EdgeId;
 use gbp_map::MAX_HORIZON;
 
+/// Toggle for the F2 metrics overlay window.
+#[derive(Resource, Default)]
+pub struct MetricsVisible(pub bool);
+
+/// Toggle for the F1 world inspector window.
+#[derive(Resource, Default)]
+pub struct InspectorVisible(pub bool);
+
 /// Maximum entries in the WS inbox queue before dropping oldest.
 pub const WS_INBOX_CAP: usize = 64;
 
@@ -29,6 +37,16 @@ pub struct DrawConfig {
     pub planned_paths: bool,
     pub belief_tubes: bool,
     pub factor_links: bool,
+    pub uncertainty_bars: bool,
+    pub path_traces: bool,
+    pub comm_radius_circles: bool,
+    pub ir_safety_distance: bool,
+    pub robot_colliders: bool,
+    pub collision_markers: bool,
+    pub infinite_grid: bool,
+    /// Minimum safe center-to-center distance (m) for IR factor color gradient.
+    /// Mirrors [gbp.interrobot] d_safe from config.toml.
+    pub ir_d_safe: f32,
 }
 
 impl Default for DrawConfig {
@@ -43,9 +61,33 @@ impl Default for DrawConfig {
             planned_paths: true,
             belief_tubes: true,
             factor_links: true,
+            uncertainty_bars: false,
+            path_traces: false,
+            comm_radius_circles: false,
+            ir_safety_distance: false,
+            robot_colliders: false,
+            collision_markers: false,
+            infinite_grid: false,
+            ir_d_safe: 1.3,
         }
     }
 }
+
+/// Marker component for node sphere entities (toggled by DrawConfig::node_spheres).
+#[derive(Component)]
+pub struct NodeSphere;
+
+/// Marker component for the physical track STL mesh entity.
+#[derive(Component)]
+pub struct PhysicalTrackMesh;
+
+/// Marker component for the magnetic mainlines STL mesh entity.
+#[derive(Component)]
+pub struct MainlinesMesh;
+
+/// Marker component for the magnetic markers STL mesh entity.
+#[derive(Component)]
+pub struct MarkersMesh;
 
 /// Per-robot state for visualiser rendering.
 #[derive(Clone, Debug)]
@@ -117,6 +159,43 @@ impl RobotState {
 #[derive(Resource, Default)]
 pub struct RobotStates(pub HashMap<u32, RobotState>);
 
+/// Maximum number of positions retained per robot in the trace ring buffer.
+pub const TRACE_CAP: usize = 10_000;
+
+/// Bevy resource: per-robot ring buffer of recent world-space positions for path trace drawing.
+#[derive(Resource, Default)]
+pub struct TraceHistory {
+    pub traces: HashMap<u32, VecDeque<Vec3>>,
+    /// Stores `Time::elapsed_secs()` at the time of the last push for each robot.
+    last_seen: HashMap<u32, f32>,
+}
+
+impl TraceHistory {
+    /// Append a position to the ring buffer for the given robot, evicting the oldest if full.
+    /// `elapsed` should be `time.elapsed_secs()` from Bevy's `Time` resource.
+    pub fn push(&mut self, robot_id: u32, pos: Vec3, elapsed: f32) {
+        let trace = self.traces.entry(robot_id).or_default();
+        if trace.len() >= TRACE_CAP {
+            trace.pop_front();
+        }
+        trace.push_back(pos);
+        self.last_seen.insert(robot_id, elapsed);
+    }
+
+    /// Remove robots whose last update is older than `timeout_secs`.
+    /// `now` should be `time.elapsed_secs()` from Bevy's `Time` resource.
+    pub fn prune_stale(&mut self, now: f32, timeout_secs: f32) {
+        let stale: Vec<u32> = self.last_seen.iter()
+            .filter(|(_, &last)| now - last > timeout_secs)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in stale {
+            self.traces.remove(&id);
+            self.last_seen.remove(&id);
+        }
+    }
+}
+
 /// Bevy resource: parsed map.
 #[derive(Resource)]
 pub struct MapRes(pub gbp_map::map::Map);
@@ -134,5 +213,35 @@ mod tests {
         assert_eq!(s.active_factor_count, 0);
         assert_eq!(s.raw_gbp_velocity, 0.0);
         assert_eq!(s.min_neighbour_dist_3d, f32::MAX);
+    }
+}
+
+#[cfg(test)]
+mod trace_tests {
+    use super::*;
+    use bevy::math::Vec3;
+
+    #[test]
+    fn trace_push_evicts_at_cap() {
+        let mut th = TraceHistory::default();
+        for i in 0..TRACE_CAP + 5 {
+            th.push(0, Vec3::new(i as f32, 0.0, 0.0), i as f32);
+        }
+        assert_eq!(th.traces[&0].len(), TRACE_CAP);
+        // Oldest should have been evicted
+        assert_eq!(th.traces[&0].front().unwrap().x, 5.0);
+    }
+
+    #[test]
+    fn trace_prune_removes_stale() {
+        let mut th = TraceHistory::default();
+        th.push(0, Vec3::ZERO, 0.0);
+        th.push(1, Vec3::ZERO, 0.0);
+        // Robot 0 last seen at t=0, robot 1 at t=10
+        th.push(1, Vec3::ZERO, 10.0);
+        th.prune_stale(11.0, 5.0);
+        // Robot 0 should be pruned (11 - 0 = 11 > 5), robot 1 kept (11 - 10 = 1 < 5)
+        assert!(!th.traces.contains_key(&0));
+        assert!(th.traces.contains_key(&1));
     }
 }

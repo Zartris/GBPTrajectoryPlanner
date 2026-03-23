@@ -5,6 +5,7 @@
 
 use bevy::input::mouse::{AccumulatedMouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
+use tracing::info;
 use bevy_egui::input::EguiWantsInput;
 
 use crate::map_scene::MapBounds;
@@ -17,6 +18,8 @@ pub enum CameraMode {
     Orbit,
     /// Free pan with WASD / arrow keys; camera looks straight down.
     Pan,
+    /// Follow a specific robot with a P-controller smooth camera.
+    Follow(u32),
 }
 
 /// Resource holding all camera state (written each frame to the Camera3d transform).
@@ -65,12 +68,32 @@ impl CameraState {
     }
 
     /// Reset to initial values.
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.focus = self.initial_focus;
         self.distance = self.initial_distance;
         self.yaw = self.initial_yaw;
         self.pitch = self.initial_pitch;
         self.mode = CameraMode::Orbit;
+    }
+
+    /// Toggle between Orbit and Pan modes.
+    pub fn toggle_mode(&mut self) {
+        self.mode = match self.mode {
+            CameraMode::Orbit => CameraMode::Pan,
+            CameraMode::Pan | CameraMode::Follow(_) => CameraMode::Orbit,
+        };
+    }
+
+    /// Request follow mode for the next robot (ID 0 as default).
+    pub fn request_follow_next(&mut self) {
+        self.mode = CameraMode::Follow(0);
+    }
+
+    /// Exit follow mode back to orbit.
+    pub fn exit_follow(&mut self) {
+        if matches!(self.mode, CameraMode::Follow(_)) {
+            self.mode = CameraMode::Orbit;
+        }
     }
 
     /// Compute the world-space camera position from orbit parameters.
@@ -138,7 +161,7 @@ fn camera_input_system(
     // Toggle mode: C key.
     if keys.just_pressed(KeyCode::KeyC) {
         state.mode = match state.mode {
-            CameraMode::Orbit => CameraMode::Pan,
+            CameraMode::Orbit | CameraMode::Follow(_) => CameraMode::Pan,
             CameraMode::Pan => CameraMode::Orbit,
         };
     }
@@ -212,6 +235,7 @@ fn camera_input_system(
                 state.focus += right * speed * dt;
             }
         }
+        CameraMode::Follow(_) => {}
     }
 }
 

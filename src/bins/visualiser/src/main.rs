@@ -1,9 +1,9 @@
 mod state;
 mod ws_client;
 mod map_scene;
+mod camera;
 mod robot_render;
 mod ui;
-mod camera;
 
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
@@ -11,19 +11,39 @@ use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 use bevy_egui::EguiPlugin;
+// bevy_inspector_egui — used via DefaultInspectorConfigPlugin + manual ui_for_world
 use serde::Deserialize;
-use state::{DrawConfig, MapRes, RobotStates, WsInbox, WsOutbox};
+use state::{DrawConfig, InspectorVisible, MapRes, RobotStates, WsInbox, WsOutbox};
 use map_scene::MapScenePlugin;
 use camera::CameraPlugin;
 use robot_render::RobotRenderPlugin;
 use ui::UiPlugin;
 use tracing_subscriber::EnvFilter;
 
-/// TOML structure for the [visualisation.draw] section.
+/// TOML structure for the [visualisation.draw] section plus [gbp.interrobot].
 #[derive(Deserialize, Default)]
 struct VisConfig {
     #[serde(default)]
     visualisation: VisSection,
+    #[serde(default)]
+    gbp: GbpSection,
+}
+
+#[derive(Deserialize, Default)]
+struct GbpSection {
+    #[serde(default)]
+    interrobot: InterRobotToml,
+}
+
+#[derive(Deserialize)]
+struct InterRobotToml {
+    d_safe: Option<f32>,
+}
+
+impl Default for InterRobotToml {
+    fn default() -> Self {
+        Self { d_safe: None }
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -43,6 +63,13 @@ struct DrawToml {
     planned_paths: Option<bool>,
     belief_tubes: Option<bool>,
     factor_links: Option<bool>,
+    uncertainty_bars: Option<bool>,
+    path_traces: Option<bool>,
+    comm_radius_circles: Option<bool>,
+    ir_safety_distance: Option<bool>,
+    robot_colliders: Option<bool>,
+    collision_markers: Option<bool>,
+    infinite_grid: Option<bool>,
 }
 
 impl From<DrawToml> for DrawConfig {
@@ -58,6 +85,14 @@ impl From<DrawToml> for DrawConfig {
             planned_paths: t.planned_paths.unwrap_or(d.planned_paths),
             belief_tubes: t.belief_tubes.unwrap_or(d.belief_tubes),
             factor_links: t.factor_links.unwrap_or(d.factor_links),
+            uncertainty_bars: t.uncertainty_bars.unwrap_or(d.uncertainty_bars),
+            path_traces: t.path_traces.unwrap_or(d.path_traces),
+            comm_radius_circles: t.comm_radius_circles.unwrap_or(d.comm_radius_circles),
+            ir_safety_distance: t.ir_safety_distance.unwrap_or(d.ir_safety_distance),
+            robot_colliders: t.robot_colliders.unwrap_or(d.robot_colliders),
+            collision_markers: t.collision_markers.unwrap_or(d.collision_markers),
+            infinite_grid: t.infinite_grid.unwrap_or(d.infinite_grid),
+            ir_d_safe: d.ir_d_safe, // populated separately from [gbp.interrobot]
         }
     }
 }
@@ -83,7 +118,12 @@ fn main() {
         .unwrap_or_else(|_| "config/config.toml".to_string());
     let draw_config = if let Ok(toml_str) = std::fs::read_to_string(&config_path) {
         let vc: VisConfig = toml::from_str(&toml_str).unwrap_or_default();
-        DrawConfig::from(vc.visualisation.draw)
+        let mut dc = DrawConfig::from(vc.visualisation.draw);
+        // Propagate [gbp.interrobot] d_safe so the IR color gradient uses the real value
+        if let Some(d) = vc.gbp.interrobot.d_safe {
+            dc.ir_d_safe = d.max(1e-3);
+        }
+        dc
     } else {
         DrawConfig::default()
     };
@@ -104,13 +144,23 @@ fn main() {
     let ws_shutdown = ws_client::spawn_ws_client(ws_url, Arc::clone(&inbox), Arc::clone(&outbox));
 
     App::new()
+        // Cap frame rate: ~60 FPS when focused, ~10 FPS when unfocused.
+        // Critical for software renderers (llvmpipe) to avoid 100% CPU.
+        .insert_resource(bevy::winit::WinitSettings {
+            focused_mode: bevy::winit::UpdateMode::reactive(
+                std::time::Duration::from_millis(16),
+            ),
+            unfocused_mode: bevy::winit::UpdateMode::reactive(
+                std::time::Duration::from_millis(100),
+            ),
+        })
         .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.1))) // dark blue background
         .add_plugins(DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "GBP Trajectory Planner".into(),
                     resolution: (1280u32, 720u32).into(),
-                    present_mode: bevy::window::PresentMode::AutoNoVsync,
+                    present_mode: bevy::window::PresentMode::AutoVsync,
                     ..default()
                 }),
                 ..default()
@@ -122,6 +172,9 @@ fn main() {
         )
         .add_plugins(EguiPlugin::default())
         .add_plugins(bevy_stl::StlPlugin)
+        .init_resource::<InspectorVisible>()
+        // disabled: breaks egui on llvmpipe
+        
         // Most entities are static (environment STLs, node spheres); force-enable
         // transform propagation skipping for unchanged entities.
         .insert_resource(bevy::transform::StaticTransformOptimizations::enabled())
@@ -143,12 +196,14 @@ fn main() {
     ws_shutdown.store(true, Ordering::Relaxed);
     tracing::info!("app exited, WS client shutdown flag set");
 }
+
 fn auto_screenshot(mut commands: Commands, time: Res<Time>, mut done: Local<bool>) {
     if *done { return; }
     if time.elapsed_secs() > 2.0 {
         *done = true;
+        let path = "/repo/.worktrees/m6a-visualiser-overhaul/screenshot.png";
+        tracing::info!("[debug] screenshot -> {path}");
         commands.spawn(bevy::render::view::screenshot::Screenshot::primary_window())
-            .observe(bevy::render::view::screenshot::save_to_disk(
-                "/repo/.worktrees/m6a-visualiser-overhaul/screenshot.png"));
+            .observe(bevy::render::view::screenshot::save_to_disk(path));
     }
 }
