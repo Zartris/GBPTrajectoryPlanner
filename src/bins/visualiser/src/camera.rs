@@ -324,7 +324,9 @@ fn apply_camera_transform(
     mut camera: Single<&mut Transform, With<MainCamera>>,
     robot_states: Res<RobotStates>,
     time: Res<Time>,
+    mut follow_log: Local<f32>,
 ) {
+    *follow_log += time.delta_secs();
     match state.mode {
         CameraMode::Follow(rid) => {
             if let Some(rs) = robot_states.0.get(&rid) {
@@ -332,8 +334,16 @@ fn apply_camera_transform(
                 let desired = rpos + FOLLOW_OFFSET;
                 let alpha = (time.delta_secs() * FOLLOW_P_GAIN).min(1.0);
                 let pos = camera.translation.lerp(desired, alpha);
+                if *follow_log >= 1.0 {
+                    *follow_log = 0.0;
+                    info!("[cam] follow r{rid}: pos_3d={:?} bevy={rpos} desired={desired} cam={pos}", rs.pos_3d);
+                }
                 **camera = Transform::from_translation(pos).looking_at(rpos, Vec3::Y);
             } else {
+                if *follow_log >= 1.0 {
+                    *follow_log = 0.0;
+                    info!("[cam] follow r{rid}: robot NOT FOUND in RobotStates");
+                }
                 let pos = state.world_position();
                 **camera = Transform::from_translation(pos).looking_at(state.focus, Vec3::Y);
             }
