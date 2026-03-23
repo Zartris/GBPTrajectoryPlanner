@@ -124,4 +124,4 @@ Shared hooks live in `.githooks/`. New contributors must run once after cloning:
 ```bash
 git config core.hooksPath .githooks
 ```
-The `commit-msg` hook strips AI agent co-author credits. Do NOT add `Co-Authored-By` lines for AI agents, but this should also be the case for any git related activites. 
+The `commit-msg` hook strips AI agent co-author credits. Do NOT add `Co-Authored-By` lines for AI agents.
