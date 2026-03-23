@@ -148,7 +148,7 @@ pub struct RobotStateChanged {
 }
 
 /// Describes the specific kind of state change for a robot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RobotChangeType {
     /// A new robot appeared in [`RobotStates`](crate::state::RobotStates).
     Connected,

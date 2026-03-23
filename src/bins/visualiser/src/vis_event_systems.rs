@@ -105,8 +105,7 @@ fn proximity_emitter(
         };
         let pa = state_a.pos_3d;
 
-        for j in (i + 1)..ids.len() {
-            let id_b = ids[j];
+        for &id_b in &ids[(i + 1)..] {
             let Some(state_b) = robot_states.0.get(&id_b) else {
                 continue;
             };

@@ -64,6 +64,7 @@ fn debug_monitor_system(
     api: VisApi,
     cfg: Res<DebugMonitorConfig>,
     mut last_log: Local<f32>,
+    mut proximity_alerts: MessageReader<crate::vis_events::ProximityAlert>,
 ) {
     let now = api.elapsed_secs();
 
@@ -93,24 +94,13 @@ fn debug_monitor_system(
         }
     }
 
-    // Proximity warnings — check every frame, not just at the interval.
-    let ids = api.robot_ids();
-    let threshold = cfg.proximity_threshold;
-    for i in 0..ids.len() {
-        let Some(pi) = api.robot_position(ids[i]) else { continue };
-        for j in (i + 1)..ids.len() {
-            let Some(pj) = api.robot_position(ids[j]) else { continue };
-            let dx = pi[0] - pj[0];
-            let dy = pi[1] - pj[1];
-            let dz = pi[2] - pj[2];
-            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
-            if dist < threshold {
-                tracing::warn!(
-                    "[debug_monitor] PROXIMITY t={:.1}s  robots {} & {}  dist={:.3}m < {:.3}m",
-                    now, ids[i], ids[j], dist, threshold
-                );
-            }
-        }
+    // Proximity warnings — use ProximityAlert events instead of per-frame O(n^2).
+    // The VisEventPlugin already rate-limits alerts to 1/sec per pair.
+    for alert in proximity_alerts.read() {
+        tracing::warn!(
+            "[debug_monitor] PROXIMITY t={:.1}s  robots {} & {}  dist={:.3}m < {:.3}m",
+            now, alert.robot_a, alert.robot_b, alert.distance, alert.d_safe
+        );
     }
 }
 
