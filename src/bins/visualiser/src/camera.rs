@@ -143,21 +143,11 @@ fn camera_input_system(
     robot_states: Res<RobotStates>,
     window_q: Query<&Window, With<PrimaryWindow>>,
     mut drag: Local<DragTracker>,
-    mut log_timer: Local<f32>,
 ) {
     let dt = time.delta_secs();
-    *log_timer += dt;
-    let should_log = *log_timer >= 2.0;
-    if should_log {
-        *log_timer = 0.0;
-    }
 
     // ── 0. Window focus ─────────────────────────────────────────────────
     let focused = window_q.single().is_ok_and(|w| w.focused);
-    if should_log {
-        info!("[cam] focused={focused} mode={:?} yaw={:.2} pitch={:.2} dist={:.1}",
-            state.mode, state.yaw, state.pitch, state.distance);
-    }
     if !focused {
         for _ in cursor_evr.read() {}
         for _ in scroll_evr.read() {}
@@ -207,16 +197,6 @@ fn camera_input_system(
     let egui_over = egui_wants.is_pointer_over_area();
     let egui_kb = egui_wants.wants_any_keyboard_input();
 
-    if (left_pressed || right_pressed) && cursor_delta != Vec2::ZERO {
-        info!(
-            "[cam] drag: L={}(f{}) R={}(f{}) delta=({:.1},{:.1}) egui_over={egui_over}",
-            left_pressed, drag.left_frames, right_pressed, drag.right_frames,
-            cursor_delta.x, cursor_delta.y
-        );
-    }
-    if should_log {
-        info!("[cam] egui: over={egui_over} kb={egui_kb}");
-    }
 
     // ── 3. Keyboard ─────────────────────────────────────────────────────
     if !egui_kb {
@@ -252,12 +232,6 @@ fn camera_input_system(
             info!("[cam] Escape: back to Orbit");
             state.mode = CameraMode::Orbit;
         }
-        if keys.just_pressed(KeyCode::F1) {
-            info!("[cam] F1 pressed (handled in ui.rs toggle_overlays)");
-        }
-        if keys.just_pressed(KeyCode::F2) {
-            info!("[cam] F2 pressed (handled in ui.rs toggle_overlays)");
-        }
     }
 
     // ── 4. Scroll zoom ──────────────────────────────────────────────────
@@ -269,9 +243,7 @@ fn camera_input_system(
             MouseScrollUnit::Line => ev.y,
             MouseScrollUnit::Pixel => ev.y * 0.05,
         };
-        let old = state.distance;
         state.distance = (state.distance * (1.0 - d * ZOOM_FACTOR)).clamp(ZOOM_MIN, ZOOM_MAX);
-        info!("[cam] scroll: d={d:.2} dist {old:.1} -> {:.1}", state.distance);
     }
 
     // ── 5. Mouse drag ───────────────────────────────────────────────────

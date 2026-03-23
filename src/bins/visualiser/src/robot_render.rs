@@ -193,16 +193,10 @@ fn update_robot_transforms(
     states: Res<RobotStates>,
     mut query: Query<(&RobotArrow, &mut Transform)>,
 ) {
-    let mut logged = false;
     for (arrow, mut transform) in query.iter_mut() {
         if let Some(state) = states.0.get(&arrow.robot_id) {
             let pos = robot_world_pos(&map.0, state.current_edge, state.position_s);
             let tan = robot_tangent(&map.0, state.current_edge, state.position_s);
-            if !logged && arrow.robot_id == 0 {
-                logged = true;
-                tracing::info!("[mesh] r0: world_pos={pos:?} pos_3d={:?} edge={:?} s={:.2}",
-                    state.pos_3d, state.current_edge, state.position_s);
-            }
             // Lift chassis so bottom sits on track (half height above track surface)
             transform.translation = Vec3::from(pos) + Vec3::new(0.0, CHASSIS_HEIGHT / 2.0, 0.0);
             // Align chassis length (Z axis) along travel direction
