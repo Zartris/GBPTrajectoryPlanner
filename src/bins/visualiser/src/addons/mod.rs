@@ -108,10 +108,20 @@ impl Plugin for AddonPlugins {
         // addon systems try to use MessageReader<T>.
         app.add_plugins(VisEventPlugin);
 
-        // Built-in addons.
+        // Built-in addons — screenshot addon is always available (no-ops without env vars).
         app.add_plugins(startup_screenshot::StartupScreenshotAddon);
-        app.add_plugins(debug_monitor::DebugMonitorAddon);
-        app.add_plugins(proximity_screenshot::ProximityScreenshotAddon);
-        app.add_plugins(state_change_logger::StateChangeLoggerAddon);
+
+        // Debug/diagnostic addons — only active when their env var is set.
+        // These addons check their env var internally and no-op if not configured,
+        // but we gate registration too to avoid unnecessary system overhead.
+        if std::env::var("VIS_DEBUG_INTERVAL").is_ok() || std::env::var("VIS_DEBUG_PROXIMITY").is_ok() {
+            app.add_plugins(debug_monitor::DebugMonitorAddon);
+        }
+        if std::env::var("VIS_PROXIMITY_SCREENSHOT").is_ok() {
+            app.add_plugins(proximity_screenshot::ProximityScreenshotAddon);
+        }
+        if std::env::var("VIS_LOG_STATE_CHANGES").is_ok() {
+            app.add_plugins(state_change_logger::StateChangeLoggerAddon);
+        }
     }
 }

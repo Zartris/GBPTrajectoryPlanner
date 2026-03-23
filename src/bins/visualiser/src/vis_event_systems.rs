@@ -162,8 +162,12 @@ fn sim_tick_emitter(
         .map(|s| s.active_factor_count)
         .sum();
 
-    // Compute global minimum pairwise 3D distance.
-    let min_pair_distance = compute_min_pair_distance(&robot_states);
+    // Use pre-computed min_neighbour_dist_3d from RobotState (avoids duplicate O(n²)).
+    let min_pair_distance = robot_states
+        .0
+        .values()
+        .map(|s| s.min_neighbour_dist_3d)
+        .fold(f32::MAX, f32::min);
 
     writer.write(SimTickEvent {
         tick: *tick_counter,
