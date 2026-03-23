@@ -80,6 +80,20 @@ bridge    →  gbp-comms, gbp-map(+parse), tokio, axum, serde_json
 visualiser → gbp-comms, gbp-map(+parse), bevy, bevy_egui, bevy_stl, toml, serde
 ```
 
+## Visualiser — Known Platform Limitations (llvmpipe / WSL2)
+
+The dev container uses `llvmpipe` (software renderer). Several Bevy/egui features break on this backend:
+
+| Feature | Issue | Status | Re-enable when |
+|---------|-------|--------|----------------|
+| `bevy-inspector-egui` (F1 inspector) | `DefaultInspectorConfigPlugin` breaks entire egui overlay — all panels become invisible | Dep in Cargo.toml, plugin NOT registered | Running on a real GPU (not llvmpipe) |
+| `sysinfo_plugin` bevy feature | Breaks egui overlay rendering on llvmpipe | Feature removed from workspace Cargo.toml | GPU renderer available |
+| `MouseMotion` events | Reports absolute cursor positions instead of deltas on X11/WSL2 | Replaced with `CursorMoved` + manual delta | Fixed permanently (platform-safe) |
+| Camera spawn ordering | Spawning `Camera3d` before scene entities breaks egui overlay | Camera spawns `.after(spawn_map_scene)` | Fixed permanently (safe on all platforms) |
+| `EguiPrimaryContextPass` multipass | `just_pressed()` fires on every pass, causing double-toggles | F1/F2 toggles in `Update` schedule instead | Fixed permanently |
+
+**To re-enable inspector on GPU:** In `main.rs`, uncomment `.register_type::<GizmoConfigStore>()` and `.add_plugins(bevy_inspector_egui::DefaultInspectorConfigPlugin)`. Add `"sysinfo_plugin"` back to bevy features in workspace `Cargo.toml`.
+
 ## Deployment Modes
 - **Simulator only**: `visualiser ←WebSocket→ simulator`
 - **Hardware only**: `visualiser ←WebSocket→ bridge ←UDP→ ESP32 fleet`
