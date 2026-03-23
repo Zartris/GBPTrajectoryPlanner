@@ -49,7 +49,28 @@ You should see a 3D window with:
 - Environment STL meshes (physical track, magnetic lines)
 - Coloured cuboid robots moving along their planned trajectories
 - Per-robot HUD panels showing velocity, edge position, and inter-robot distance
-- A control panel with pause/resume (pauses the actual simulation)
+- A control panel with pause/resume, draw toggles, and metrics
+
+### Visualiser Controls
+
+| Key / Input | Action |
+|-------------|--------|
+| **Left-drag** | Orbit camera around focus point |
+| **Right-drag** | Pan the focus point |
+| **Scroll wheel** | Zoom in / out |
+| **C** | Toggle camera mode: Orbit ↔ Pan |
+| **W / A / S / D** | Move camera (Pan mode) |
+| **Arrow keys** | Move camera (Pan mode) |
+| **Tab** | Follow camera — cycle through robots |
+| **Escape** | Exit follow mode, return to orbit |
+| **R** | Reset camera to default overhead view |
+| **F1** | Toggle entity inspector *(disabled on software renderer)* |
+| **F2** | Toggle metrics overlay |
+
+The Control panel includes:
+- **Pause / Resume** — pauses the simulator
+- **Draw Layers** — toggle visibility of environment meshes, robot visuals, gizmo layers (with pill-shaped switches)
+- **Bulk buttons** — None / All / Flip / Reset for draw toggles
 
 ### Running Tests
 
