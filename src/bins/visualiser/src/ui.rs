@@ -258,36 +258,26 @@ fn section_heading(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     ui.add(egui::Separator::default().spacing(2.0));
 }
 
-/// Toggle switch styled as a compact row: label on left, toggle on right.
+/// Toggle row: clickable dot + label, subtle highlight when active.
 fn styled_toggle(ui: &mut egui::Ui, value: &mut bool, label: &str) {
-    let row_bg = if *value {
-        egui::Color32::from_rgba_premultiplied(40, 55, 80, 60)
+    let dot = if *value { "●" } else { "○" };
+    let dot_color = if *value {
+        egui::Color32::from_rgb(100, 220, 180)
     } else {
-        egui::Color32::TRANSPARENT
+        egui::Color32::from_rgb(80, 85, 100)
     };
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 18.0),
-        egui::Sense::hover(),
-    );
-    if row_bg != egui::Color32::TRANSPARENT {
-        ui.painter().rect_filled(rect, 2.0, row_bg);
-    }
+    let text_color = if *value {
+        egui::Color32::from_rgb(210, 220, 235)
+    } else {
+        egui::Color32::from_rgb(150, 155, 170)
+    };
+
     ui.horizontal(|ui| {
         ui.add_space(4.0);
-        let dot = if *value { "●" } else { "○" };
-        let dot_color = if *value {
-            egui::Color32::from_rgb(100, 220, 180)
-        } else {
-            egui::Color32::from_rgb(80, 85, 100)
-        };
-        if ui.add(egui::Label::new(
-            egui::RichText::new(dot).color(dot_color).size(10.0)
-        ).sense(egui::Sense::click())).clicked() {
-            *value = !*value;
-        }
-        if ui.add(egui::Label::new(
-            egui::RichText::new(label).size(11.0)
-        ).sense(egui::Sense::click())).clicked() {
+        let response = ui.add(egui::Label::new(
+            egui::RichText::new(format!("{dot}  {label}")).color(text_color).size(11.0)
+        ).sense(egui::Sense::click()));
+        if response.clicked() {
             *value = !*value;
         }
     });
