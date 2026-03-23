@@ -95,7 +95,16 @@ fn draw_hud(
 ) -> Result {
     let ctx = ctxs.ctx_mut()?;
 
-    // FPS / Performance overlay (top-left, minimal)
+    // ── Global egui style — dark, clean, generous spacing ──────────────
+    ctx.style_mut(|s| {
+        s.visuals.window_shadow = egui::Shadow::NONE;
+        s.visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(30));
+        s.visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgba_premultiplied(15, 18, 35, 220);
+        s.spacing.item_spacing = egui::vec2(8.0, 5.0);
+        s.spacing.window_margin = egui::Margin::same(12);
+    });
+
+    // FPS / Performance overlay (top-right, minimal)
     let fps = diagnostics
         .get(&FrameTimeDiagnosticsPlugin::FPS)
         .and_then(|d| d.smoothed())
@@ -107,13 +116,17 @@ fn draw_hud(
         .unwrap_or(0.0);
 
     egui::Window::new("Performance")
-        .anchor(egui::Align2::RIGHT_TOP, [-5.0, 5.0])
+        .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
         .title_bar(false)
         .resizable(false)
         .show(ctx, |ui| {
-            ui.label(format!("FPS: {:.0}  ({:.1}ms)", fps, frame_ms));
-            ui.label(format!("Backend: {:.0} Hz", backend.msg_hz));
-            ui.label("F1: Inspector  F2: Metrics");
+            ui.label(egui::RichText::new(format!("FPS: {:.0}  ({:.1}ms)", fps, frame_ms))
+                .monospace().size(11.0).color(egui::Color32::from_rgb(180, 200, 220)));
+            ui.label(egui::RichText::new(format!("Backend: {:.0} Hz", backend.msg_hz))
+                .monospace().size(11.0).color(egui::Color32::from_rgb(180, 200, 220)));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("F1 Inspector  ·  F2 Metrics")
+                .size(10.0).color(egui::Color32::from_rgb(100, 110, 130)));
         });
 
     // Metrics (toggled by F2) — rendered inside Control panel since separate windows fail to render
@@ -135,165 +148,194 @@ fn draw_hud(
             });
     }
 
-    // Global control panel
-    egui::Window::new("Control").show(ctx, |ui| {
-        let label = if paused.0 { "Resume" } else { "Pause" };
-        if ui.button(label).clicked() {
+    // ── Control Panel ─────────────────────────────────────────────────
+    let accent = egui::Color32::from_rgb(100, 200, 220); // teal accent
+    let dim = egui::Color32::from_rgb(120, 130, 150);    // muted text
+    let heading_color = egui::Color32::from_rgb(200, 210, 230);
+
+    egui::Window::new(egui::RichText::new("◈  Control").color(heading_color).size(14.0))
+        .default_width(220.0)
+        .show(ctx, |ui| {
+        // ── Simulation ──
+        ui.add_space(2.0);
+        let btn_text = if paused.0 { "▶  Resume" } else { "⏸  Pause" };
+        if ui.button(egui::RichText::new(btn_text).size(13.0)).clicked() {
             paused.0 = !paused.0;
             let cmd = if paused.0 { r#"{"command":"pause"}"# } else { r#"{"command":"resume"}"# };
             outbox.0.lock().unwrap_or_else(|e| e.into_inner()).push_back(cmd.to_string());
         }
+        ui.add_space(2.0);
+        ui.label(egui::RichText::new(format!("⬡  {} robots connected", states.0.len()))
+            .color(dim).size(11.0));
+
+        ui.add_space(6.0);
         ui.separator();
-        ui.label(format!("Connected: {} robots", states.0.len()));
-        // Debug: always show toggle state
-        ui.label(format!("F1={} F2={}", inspector_vis.0, metrics_vis.0));
+        ui.add_space(4.0);
 
-        // ── Metrics section (F2 toggle) ──
-        if metrics_vis.0 {
-            ui.separator();
-            ui.label(egui::RichText::new("== Metrics (F2) ==").strong());
-            let active_ir: usize = states.0.values().map(|s| s.active_factor_count).sum();
-            ui.label(format!("FPS: {:.0}  ({:.1}ms)", fps, frame_ms));
-            ui.label(format!("Backend: {:.0} Hz", backend.msg_hz));
-            ui.label(format!("Active IR factors: {}", active_ir));
-        }
-
-        // ── Inspector indicator (F1 toggle) ──
-        if inspector_vis.0 {
-            ui.separator();
-            ui.label(egui::RichText::new("== Inspector ON (F1) ==").strong());
-            ui.label("Inspector window should be visible");
-        }
-
-        ui.separator();
-
-        // Draw toggles section
-        egui::CollapsingHeader::new("Draw")
+        // ── Draw Toggles ──
+        egui::CollapsingHeader::new(egui::RichText::new("◉  Draw Layers").color(accent).size(12.0))
             .default_open(false)
             .show(ui, |ui| {
-                // --- Environment group ---
-                ui.label(egui::RichText::new("Environment").strong());
-                ui.checkbox(&mut draw.physical_track,     "Physical track");
-                ui.checkbox(&mut draw.magnetic_mainlines, "Magnetic mainlines");
-                ui.checkbox(&mut draw.magnetic_markers,   "Magnetic markers");
-                ui.checkbox(&mut draw.node_spheres,       "Node spheres");
-                ui.checkbox(&mut draw.edge_lines,         "Edge lines");
-                ui.checkbox(&mut draw.infinite_grid,      "Infinite grid");
-
                 ui.add_space(4.0);
 
-                // --- Robots group ---
-                ui.label(egui::RichText::new("Robots").strong());
-                ui.checkbox(&mut draw.robots,              "Robots");
-                ui.checkbox(&mut draw.planned_paths,       "Planned paths");
-                ui.checkbox(&mut draw.belief_tubes,        "Belief tubes");
-                ui.checkbox(&mut draw.factor_links,        "Factor links");
-                ui.checkbox(&mut draw.robot_colliders,     "Robot colliders");
-                ui.checkbox(&mut draw.uncertainty_bars,    "Uncertainty bars");
-                ui.checkbox(&mut draw.path_traces,         "Path traces");
-                ui.checkbox(&mut draw.comm_radius_circles, "Comm radius circles");
-                ui.checkbox(&mut draw.ir_safety_distance,  "IR safety distance");
-                ui.checkbox(&mut draw.collision_markers,   "Collision markers");
+                // Environment group
+                section_heading(ui, "⬡  Environment", heading_color);
+                styled_toggle(ui, &mut draw.physical_track,     "Physical track");
+                styled_toggle(ui, &mut draw.magnetic_mainlines, "Magnetic mainlines");
+                styled_toggle(ui, &mut draw.magnetic_markers,   "Magnetic markers");
+                styled_toggle(ui, &mut draw.node_spheres,       "Node spheres");
+                styled_toggle(ui, &mut draw.edge_lines,         "Edge lines");
+                styled_toggle(ui, &mut draw.infinite_grid,      "Infinite grid");
 
-                ui.add_space(4.0);
+                ui.add_space(6.0);
 
-                // --- Gizmo master toggle ---
-                ui.label(egui::RichText::new("Gizmos").strong());
+                // Robots group
+                section_heading(ui, "⊕  Robots", heading_color);
+                styled_toggle(ui, &mut draw.robots,              "Robots");
+                styled_toggle(ui, &mut draw.planned_paths,       "Planned paths");
+                styled_toggle(ui, &mut draw.belief_tubes,        "Belief tubes");
+                styled_toggle(ui, &mut draw.factor_links,        "Factor links");
+                styled_toggle(ui, &mut draw.robot_colliders,     "Robot colliders");
+                styled_toggle(ui, &mut draw.uncertainty_bars,    "Uncertainty bars");
+                styled_toggle(ui, &mut draw.path_traces,         "Path traces");
+                styled_toggle(ui, &mut draw.comm_radius_circles, "Comm radius");
+                styled_toggle(ui, &mut draw.ir_safety_distance,  "IR safety dist");
+                styled_toggle(ui, &mut draw.collision_markers,   "Collisions");
+
+                ui.add_space(6.0);
+
+                // Gizmo master
+                section_heading(ui, "⚙  Gizmos", heading_color);
                 let (gizmo_cfg, _) = gizmo_store.config_mut::<DefaultGizmoConfigGroup>();
-                ui.checkbox(&mut gizmo_cfg.enabled, "Enable all gizmos");
+                styled_toggle(ui, &mut gizmo_cfg.enabled, "All gizmos");
 
+                ui.add_space(6.0);
+                ui.separator();
                 ui.add_space(4.0);
 
-                // --- Bulk buttons ---
+                // Bulk buttons
                 ui.horizontal(|ui| {
-                    if ui.button("None").clicked() {
-                        draw.physical_track     = false;
-                        draw.magnetic_mainlines = false;
-                        draw.magnetic_markers   = false;
-                        draw.node_spheres       = false;
-                        draw.edge_lines         = false;
-                        draw.infinite_grid      = false;
-                        draw.robots             = false;
-                        draw.planned_paths      = false;
-                        draw.belief_tubes       = false;
-                        draw.factor_links       = false;
-                        draw.robot_colliders    = false;
-                        draw.uncertainty_bars   = false;
-                        draw.path_traces        = false;
-                        draw.comm_radius_circles = false;
-                        draw.ir_safety_distance = false;
-                        draw.collision_markers  = false;
+                    for (label, action) in [("None", false), ("All", true)] {
+                        if ui.small_button(label).clicked() {
+                            set_all_draw(&mut draw, action);
+                        }
                     }
-                    if ui.button("All").clicked() {
-                        draw.physical_track     = true;
-                        draw.magnetic_mainlines = true;
-                        draw.magnetic_markers   = true;
-                        draw.node_spheres       = true;
-                        draw.edge_lines         = true;
-                        draw.infinite_grid      = true;
-                        draw.robots             = true;
-                        draw.planned_paths      = true;
-                        draw.belief_tubes       = true;
-                        draw.factor_links       = true;
-                        draw.robot_colliders    = true;
-                        draw.uncertainty_bars   = true;
-                        draw.path_traces        = true;
-                        draw.comm_radius_circles = true;
-                        draw.ir_safety_distance = true;
-                        draw.collision_markers  = true;
+                    if ui.small_button("Flip").clicked() {
+                        flip_all_draw(&mut draw);
                     }
-                    if ui.button("Flip").clicked() {
-                        draw.physical_track = !draw.physical_track;
-                        draw.magnetic_mainlines = !draw.magnetic_mainlines;
-                        draw.magnetic_markers = !draw.magnetic_markers;
-                        draw.node_spheres = !draw.node_spheres;
-                        draw.edge_lines = !draw.edge_lines;
-                        draw.infinite_grid = !draw.infinite_grid;
-                        draw.robots = !draw.robots;
-                        draw.planned_paths = !draw.planned_paths;
-                        draw.belief_tubes = !draw.belief_tubes;
-                        draw.factor_links = !draw.factor_links;
-                        draw.robot_colliders = !draw.robot_colliders;
-                        draw.uncertainty_bars = !draw.uncertainty_bars;
-                        draw.path_traces = !draw.path_traces;
-                        draw.comm_radius_circles = !draw.comm_radius_circles;
-                        draw.ir_safety_distance = !draw.ir_safety_distance;
-                        draw.collision_markers = !draw.collision_markers;
-                    }
-                    if ui.button("Reset").clicked() {
+                    if ui.small_button("Reset").clicked() {
                         *draw = DrawConfig::default();
                     }
                 });
             });
     });
 
-    // Per-robot side panels
+    // ── Per-robot panels ────────────────────────────────────────────
+    let robot_colors = [
+        egui::Color32::from_rgb(30, 180, 255),  // blue
+        egui::Color32::from_rgb(255, 120, 40),   // orange
+        egui::Color32::from_rgb(60, 255, 120),   // green
+        egui::Color32::from_rgb(255, 60, 200),   // pink
+    ];
     let mut sorted_ids: Vec<u32> = states.0.keys().copied().collect();
     sorted_ids.sort();
     for id in sorted_ids {
         if let Some(state) = states.0.get(&id) {
-            egui::Window::new(format!("Robot {}", id)).show(ctx, |ui| {
-                ui.label(format!("cmd_v:   {}", fmt_velocity(state.velocity)));
-                ui.label(format!("gbp_v:   {}", fmt_velocity(state.raw_gbp_velocity)));
-                ui.label(format!("Edge:    {:?} s={:.2}", state.current_edge, state.position_s));
+            let rc = robot_colors[(id as usize) % robot_colors.len()];
+            egui::Window::new(
+                egui::RichText::new(format!("◈  Robot {}", id)).color(rc).size(13.0)
+            ).show(ctx, |ui| {
+                stat_row(ui, "cmd_v", &fmt_velocity(state.velocity), dim);
+                stat_row(ui, "gbp_v", &fmt_velocity(state.raw_gbp_velocity), dim);
+                stat_row(ui, "edge",  &format!("{:?}  s={:.2}", state.current_edge, state.position_s), dim);
                 let dist_str = if state.min_neighbour_dist_3d < 100.0 {
                     format!("{:.2}m", state.min_neighbour_dist_3d)
-                } else {
-                    "—".into()
-                };
-                ui.label(format!("dist3d:  {}", dist_str));
-                ui.label(fmt_factor_count(state.active_factor_count));
+                } else { "—".into() };
+                stat_row(ui, "dist3d", &dist_str, dim);
+                stat_row(ui, "factors", &fmt_factor_count(state.active_factor_count), dim);
             });
         }
     }
 
     if states.0.is_empty() {
-        egui::Window::new("Status").show(ctx, |ui| {
-            ui.label("No robots connected");
+        egui::Window::new(egui::RichText::new("◈  Status").color(dim).size(13.0))
+            .show(ctx, |ui| {
+            ui.label(egui::RichText::new("No robots connected").color(dim).italics());
         });
     }
 
     Ok(())
+}
+
+// ── UI Helpers ──────────────────────────────────────────────────────────────
+
+/// Colored section heading with a thin separator line beneath.
+fn section_heading(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
+    ui.label(egui::RichText::new(text).color(color).size(11.5).strong());
+    ui.add(egui::Separator::default().spacing(2.0));
+}
+
+/// Toggle switch styled as a compact row: label on left, toggle on right.
+fn styled_toggle(ui: &mut egui::Ui, value: &mut bool, label: &str) {
+    let row_bg = if *value {
+        egui::Color32::from_rgba_premultiplied(40, 55, 80, 60)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 18.0),
+        egui::Sense::hover(),
+    );
+    if row_bg != egui::Color32::TRANSPARENT {
+        ui.painter().rect_filled(rect, 2.0, row_bg);
+    }
+    ui.horizontal(|ui| {
+        ui.add_space(4.0);
+        let dot = if *value { "●" } else { "○" };
+        let dot_color = if *value {
+            egui::Color32::from_rgb(100, 220, 180)
+        } else {
+            egui::Color32::from_rgb(80, 85, 100)
+        };
+        if ui.add(egui::Label::new(
+            egui::RichText::new(dot).color(dot_color).size(10.0)
+        ).sense(egui::Sense::click())).clicked() {
+            *value = !*value;
+        }
+        if ui.add(egui::Label::new(
+            egui::RichText::new(label).size(11.0)
+        ).sense(egui::Sense::click())).clicked() {
+            *value = !*value;
+        }
+    });
+}
+
+/// Key-value stat row for robot panels.
+fn stat_row(ui: &mut egui::Ui, key: &str, value: &str, dim: egui::Color32) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(key).color(dim).monospace().size(10.5));
+        ui.label(egui::RichText::new(value).monospace().size(10.5));
+    });
+}
+
+fn set_all_draw(draw: &mut DrawConfig, on: bool) {
+    draw.physical_track = on; draw.magnetic_mainlines = on; draw.magnetic_markers = on;
+    draw.node_spheres = on; draw.edge_lines = on; draw.infinite_grid = on;
+    draw.robots = on; draw.planned_paths = on; draw.belief_tubes = on;
+    draw.factor_links = on; draw.robot_colliders = on; draw.uncertainty_bars = on;
+    draw.path_traces = on; draw.comm_radius_circles = on;
+    draw.ir_safety_distance = on; draw.collision_markers = on;
+}
+
+fn flip_all_draw(draw: &mut DrawConfig) {
+    draw.physical_track = !draw.physical_track; draw.magnetic_mainlines = !draw.magnetic_mainlines;
+    draw.magnetic_markers = !draw.magnetic_markers; draw.node_spheres = !draw.node_spheres;
+    draw.edge_lines = !draw.edge_lines; draw.infinite_grid = !draw.infinite_grid;
+    draw.robots = !draw.robots; draw.planned_paths = !draw.planned_paths;
+    draw.belief_tubes = !draw.belief_tubes; draw.factor_links = !draw.factor_links;
+    draw.robot_colliders = !draw.robot_colliders; draw.uncertainty_bars = !draw.uncertainty_bars;
+    draw.path_traces = !draw.path_traces; draw.comm_radius_circles = !draw.comm_radius_circles;
+    draw.ir_safety_distance = !draw.ir_safety_distance; draw.collision_markers = !draw.collision_markers;
 }
 
 #[cfg(test)]
