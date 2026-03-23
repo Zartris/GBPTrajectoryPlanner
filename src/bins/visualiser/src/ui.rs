@@ -92,8 +92,8 @@ fn draw_hud(
     outbox: Res<WsOutbox>,
     mut draw: ResMut<DrawConfig>,
     mut gizmo_store: ResMut<GizmoConfigStore>,
-    metrics_vis: Res<MetricsVisible>,
-    inspector_vis: Res<InspectorVisible>,
+    _metrics_vis: Res<MetricsVisible>,
+    _inspector_vis: Res<InspectorVisible>,
 ) -> Result {
     let ctx = ctxs.ctx_mut()?;
 

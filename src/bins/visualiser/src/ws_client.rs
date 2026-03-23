@@ -45,7 +45,7 @@ pub fn spawn_ws_client(
                             };
                             let mut send_failed = false;
                             for cmd in pending {
-                                if sink.send(Message::Text(cmd.into())).await.is_err() {
+                                if sink.send(Message::Text(cmd)).await.is_err() {
                                     send_failed = true;
                                     break;
                                 }

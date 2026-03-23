@@ -2,7 +2,7 @@
 use bevy::prelude::*;
 use gbp_map::map::{Map, EdgeId};
 use gbp_map::MAX_HORIZON;
-use crate::state::{DrawConfig, MapRes, RobotState, RobotStates, TraceHistory, WsInbox};
+use crate::state::{DrawConfig, MapRes, RobotStates, TraceHistory, WsInbox};
 use crate::ui::SimPaused;
 use tracing::warn;
 

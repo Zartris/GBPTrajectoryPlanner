@@ -35,15 +35,9 @@ struct GbpSection {
     interrobot: InterRobotToml,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct InterRobotToml {
     d_safe: Option<f32>,
-}
-
-impl Default for InterRobotToml {
-    fn default() -> Self {
-        Self { d_safe: None }
-    }
 }
 
 #[derive(Deserialize, Default)]

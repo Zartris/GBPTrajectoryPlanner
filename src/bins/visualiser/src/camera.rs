@@ -70,9 +70,6 @@ impl CameraState {
         self.mode = CameraMode::Orbit;
     }
 
-    fn map_to_bevy(pos: [f32; 3]) -> Vec3 {
-        Vec3::new(pos[0], pos[2], -pos[1])
-    }
 
     pub fn world_position(&self) -> Vec3 {
         let (sy, cy) = self.yaw.sin_cos();
