@@ -19,6 +19,12 @@ set -euo pipefail
 DELAY="${1:-2}"
 OUTPUT="${2:-/tmp/vis-screenshot.png}"
 
+# Validate that DELAY is a positive number (integer or decimal).
+if ! [[ "${DELAY}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "[vis/screenshot.sh] ERROR: delay must be a non-negative number, got '${DELAY}'" >&2
+    exit 2
+fi
+
 echo "[vis/screenshot.sh] delay=${DELAY}s  output=${OUTPUT}"
 
 # Ensure we run from the repo root so cargo can find the workspace.
@@ -33,4 +39,9 @@ WAYLAND_DISPLAY="" \
 DISPLAY="${DISPLAY:-:0}" \
     cargo run --release -p visualiser
 
-echo "[vis/screenshot.sh] screenshot saved to ${OUTPUT}"
+if [[ -f "${OUTPUT}" ]]; then
+    echo "[vis/screenshot.sh] screenshot saved to ${OUTPUT}"
+else
+    echo "[vis/screenshot.sh] WARNING: visualiser exited but '${OUTPUT}' was not found" >&2
+    exit 1
+fi

@@ -27,10 +27,15 @@ impl Plugin for StartupScreenshotAddon {
 }
 
 // ---------------------------------------------------------------------------
-// Internal resource — tracks two-frame state machine
+// Internal resource — tracks one-frame-armed quit state machine
 // ---------------------------------------------------------------------------
 
 /// Tracks the two-phase screenshot → quit state machine.
+///
+/// After the screenshot is taken, quitting uses a two-frame delay:
+///   Frame N:   `quit_pending` set by `screenshot_trigger`.
+///   Frame N+1: `deferred_quit` sees `quit_pending`, sets `quit_armed`.
+///   Frame N+2: `deferred_quit` sees `quit_armed`, calls `api.quit()`.
 #[derive(Resource, Default)]
 struct ScreenshotState {
     /// Screenshot has been requested; quit is pending for next frame.
@@ -43,31 +48,51 @@ struct ScreenshotState {
 // Systems
 // ---------------------------------------------------------------------------
 
+/// Cached result of reading `VIS_SCREENSHOT_DELAY` from the environment.
+///
+/// - `None`           → not yet initialised (first frame).
+/// - `Some(None)`     → env var absent or unparseable; addon is disabled.
+/// - `Some(Some(v))`  → env var present and parsed to `v` seconds.
+type DelayCache = Option<Option<f32>>;
+
 /// Phase 1: waits for the configured delay, then fires the screenshot.
 fn screenshot_trigger(
     mut api: VisApi,
     mut state: ResMut<ScreenshotState>,
     mut done: Local<bool>,
+    mut delay_cache: Local<DelayCache>,
 ) {
     if *done {
         return;
     }
 
-    // Read delay from env; if the variable is absent, the addon does nothing.
-    let delay: f32 = match std::env::var("VIS_SCREENSHOT_DELAY") {
-        Ok(s) => match s.parse::<f32>() {
-            Ok(v) => v,
-            Err(_) => {
-                tracing::warn!(
-                    "[startup_screenshot] VIS_SCREENSHOT_DELAY='{}' is not a valid number — addon disabled",
-                    s
-                );
-                *done = true;
-                return;
+    // Read delay from env once and cache; if the variable is absent the addon
+    // does nothing.  Using a Local avoids calling std::env::var every frame.
+    let delay: f32 = match *delay_cache {
+        // Already initialised — use cached value.
+        Some(Some(v)) => v,
+        Some(None) => return,
+        // First frame: read the env var and cache the result.
+        None => {
+            let cached = match std::env::var("VIS_SCREENSHOT_DELAY") {
+                Ok(s) => match s.parse::<f32>() {
+                    Ok(v) => Some(v),
+                    Err(_) => {
+                        tracing::warn!(
+                            "[startup_screenshot] VIS_SCREENSHOT_DELAY='{}' is not a valid number — addon disabled",
+                            s
+                        );
+                        None
+                    }
+                },
+                Err(_) => None,
+            };
+            *delay_cache = Some(cached);
+            match cached {
+                Some(v) => v,
+                None => return,
             }
-        },
-        // Env var not set — addon is inactive; return silently every frame.
-        Err(_) => return,
+        }
     };
 
     if api.elapsed_secs() < delay {
@@ -90,13 +115,13 @@ fn screenshot_trigger(
 
     if should_quit {
         api.log("VIS_SCREENSHOT_QUIT set — will quit after render flushes screenshot");
-        // Arm a two-frame delay so the render pipeline can flush the screenshot
-        // entity before we send AppExit.
+        // Arm a two-frame delay (pending → armed → quit) so the render pipeline
+        // has two full frames to flush the screenshot entity before AppExit.
         state.quit_pending = true;
     }
 }
 
-/// Phase 2: fires AppExit one frame after `quit_pending` is set.
+/// Phase 2: fires AppExit two frames after `quit_pending` is set.
 ///
 /// Frame N:   `quit_pending` set by `screenshot_trigger`.
 /// Frame N+1: `deferred_quit` sees `quit_pending`, sets `quit_armed`, clears pending.

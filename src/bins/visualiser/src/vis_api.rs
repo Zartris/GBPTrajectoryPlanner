@@ -92,16 +92,21 @@ impl<'w, 's> VisApi<'w, 's> {
     }
 
     /// Enable or disable **all** draw-config toggles at once.
+    ///
+    /// Uses a struct literal so the compiler will catch any newly-added
+    /// [`DrawConfig`] fields that are not yet handled here.
     pub fn set_draw_all(&mut self, on: bool) {
-        self.draw.physical_track     = on;
-        self.draw.magnetic_mainlines = on;
-        self.draw.magnetic_markers   = on;
-        self.draw.node_spheres       = on;
-        self.draw.edge_lines         = on;
-        self.draw.robots             = on;
-        self.draw.planned_paths      = on;
-        self.draw.belief_tubes       = on;
-        self.draw.factor_links       = on;
+        *self.draw = DrawConfig {
+            physical_track:     on,
+            magnetic_mainlines: on,
+            magnetic_markers:   on,
+            node_spheres:       on,
+            edge_lines:         on,
+            robots:             on,
+            planned_paths:      on,
+            belief_tubes:       on,
+            factor_links:       on,
+        };
     }
 
     // -------------------------------------------------------------------------

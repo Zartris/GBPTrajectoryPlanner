@@ -28,6 +28,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,7 +63,7 @@ def run_scenario(
     delay: float,
     screenshot_path: str,
     timeout: float,
-    scenario: str | None,
+    scenario: Optional[str],
     quit_after: bool,
 ) -> bool:
     """Launch the visualiser for one scenario and check the screenshot appears."""
