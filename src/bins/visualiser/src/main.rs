@@ -4,6 +4,8 @@ mod map_scene;
 mod camera;
 mod robot_render;
 mod ui;
+mod vis_api;
+mod addons;
 
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
@@ -182,6 +184,7 @@ fn main() {
         .add_plugins(CameraPlugin)
         .add_plugins(RobotRenderPlugin)
         .add_plugins(UiPlugin)
+        .add_plugins(addons::AddonPlugins)
         .run();
 
     // App::run() blocks until exit. Set the WS shutdown flag so the background
