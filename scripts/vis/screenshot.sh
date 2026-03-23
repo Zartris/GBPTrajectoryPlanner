@@ -32,10 +32,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
+unset WAYLAND_DISPLAY
 VIS_SCREENSHOT_DELAY="${DELAY}" \
 VIS_SCREENSHOT_PATH="${OUTPUT}" \
 VIS_SCREENSHOT_QUIT="1" \
-WAYLAND_DISPLAY="" \
 DISPLAY="${DISPLAY:-:0}" \
     cargo run --release -p visualiser
 

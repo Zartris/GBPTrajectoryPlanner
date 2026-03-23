@@ -5,7 +5,8 @@
 //
 // Usage in an addon system:
 //
-//   fn my_system(mut api: VisApi, time: Res<Time>) {
+//   fn my_system(mut api: VisApi) {
+//       api.log(&format!("t={:.1}s", api.elapsed_secs()));
 //       if something { api.screenshot("/tmp/out.png"); }
 //   }
 //
@@ -75,7 +76,7 @@ impl<'w, 's> VisApi<'w, 's> {
     /// `"node_spheres"`, `"edge_lines"`, `"robots"`, `"planned_paths"`,
     /// `"belief_tubes"`, `"factor_links"`.
     ///
-    /// Unknown names are silently ignored (logged at warn level).
+    /// Unknown names log a warning via `tracing::warn!` and are otherwise ignored.
     pub fn set_draw(&mut self, field: &str, on: bool) {
         match field {
             "physical_track"     => self.draw.physical_track     = on,

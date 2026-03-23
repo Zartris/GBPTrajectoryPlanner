@@ -98,7 +98,9 @@ def run_scenario(
         print(f"[test_m6a] waiting up to {timeout}s for screenshot…")
         success = wait_for_file(screenshot_path, timeout)
     finally:
-        if proc.poll() is None:
+        # Only clean up the process when quit_after is True; when --no-quit is
+        # used the caller explicitly wants the visualiser to keep running.
+        if quit_after and proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=5)
