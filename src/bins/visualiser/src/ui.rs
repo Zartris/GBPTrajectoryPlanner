@@ -5,7 +5,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore};
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use crate::addon_config::AddonConfig;
-use crate::state::{DrawConfig, InspectorVisible, MetricsVisible, RobotStates, WsOutbox};
+use crate::state::{DrawConfig, InspectorVisible, MetricsVisible, RobotStates};
 
 /// Shared pause flag.
 #[derive(Resource, Default)]
@@ -87,10 +87,8 @@ pub fn fmt_factor_count(n: usize) -> String {
 fn draw_hud(
     mut ctxs: EguiContexts,
     states: Res<RobotStates>,
-    mut paused: ResMut<SimPaused>,
     diagnostics: Res<DiagnosticsStore>,
     backend: Res<BackendStats>,
-    outbox: Res<WsOutbox>,
     mut draw: ResMut<DrawConfig>,
     mut gizmo_store: ResMut<GizmoConfigStore>,
     mut addon_config: ResMut<AddonConfig>,
@@ -138,25 +136,9 @@ fn draw_hud(
     let dim = egui::Color32::from_rgb(120, 130, 150);    // muted text
     let heading_color = egui::Color32::from_rgb(200, 210, 230);
 
-    egui::Window::new(egui::RichText::new("◈  Control").color(heading_color).size(14.0))
+    egui::Window::new(egui::RichText::new("Control").color(heading_color).size(14.0))
         .default_width(220.0)
         .show(ctx, |ui| {
-        // ── Simulation ──
-        ui.add_space(2.0);
-        let btn_text = if paused.0 { "▶  Resume" } else { "⏸  Pause" };
-        if ui.button(egui::RichText::new(btn_text).size(13.0)).clicked() {
-            paused.0 = !paused.0;
-            let cmd = if paused.0 { r#"{"command":"pause"}"# } else { r#"{"command":"resume"}"# };
-            outbox.0.lock().unwrap_or_else(|e| e.into_inner()).push_back(cmd.to_string());
-        }
-        ui.add_space(2.0);
-        ui.label(egui::RichText::new(format!("⬡  {} robots connected", states.0.len()))
-            .color(dim).size(11.0));
-
-        ui.add_space(6.0);
-        ui.separator();
-        ui.add_space(4.0);
-
         // ── Draw Toggles ──
         egui::CollapsingHeader::new(egui::RichText::new("Draw Layers").color(accent).strong().size(12.0))
             .default_open(false)

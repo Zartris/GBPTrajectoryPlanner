@@ -254,6 +254,131 @@ impl TraceHistory {
     }
 }
 
+/// Live-tunable GBP and simulation parameters.
+///
+/// Mirrors `GbpConfig` fields from `gbp-core` plus a `timescale` for simulation speed.
+/// The settings panel mutates this resource; `detect_param_changes` watches for diffs
+/// and pushes `set_params` commands over the WebSocket outbox.
+#[derive(Resource, Clone, Debug)]
+pub struct LiveParams {
+    // -- GBP Solver --
+    pub msg_damping: f32,
+    pub internal_iters: u8,
+    pub external_iters: u8,
+
+    // -- Dynamics factor --
+    pub sigma_dynamics: f32,
+    pub gbp_timestep: f32,
+
+    // -- Inter-robot factor --
+    pub d_safe: f32,
+    pub sigma_interrobot: f32,
+    pub ir_activation_range: f32,
+    pub ir_decay_alpha: f32,
+    pub front_damping: f32,
+
+    // -- Velocity bounds (BIPM-inspired) --
+    pub v_min: f32,
+    pub v_max_default: f32,
+    pub vb_kappa: f32,
+    pub vb_margin: f32,
+    pub vb_max_precision: f32,
+
+    // -- Dynamic constraints (post-GBP) --
+    pub max_accel: f32,
+    pub max_jerk: f32,
+    pub max_speed: f32,
+
+    // -- Graph initialization --
+    pub init_variance: f32,
+    pub anchor_precision: f32,
+
+    // -- Simulation (not GBP params, but displayed in the settings panel) --
+    pub timescale: f32,
+}
+
+impl Default for LiveParams {
+    fn default() -> Self {
+        // Matches GbpConfig::default() in gbp-core/src/config.rs
+        Self {
+            msg_damping: 0.5,
+            internal_iters: 10,
+            external_iters: 10,
+            sigma_dynamics: 0.5,
+            gbp_timestep: 0.1,
+            d_safe: 1.3,
+            sigma_interrobot: 0.12,
+            ir_activation_range: 3.0,
+            ir_decay_alpha: 3.0,
+            front_damping: 0.3,
+            v_min: -0.3,
+            v_max_default: 2.5,
+            vb_kappa: 10.0,
+            vb_margin: 1.0,
+            vb_max_precision: 100.0,
+            max_accel: 2.5,
+            max_jerk: 5.0,
+            max_speed: 2.5,
+            init_variance: 100.0,
+            anchor_precision: 1000.0,
+            timescale: 1.0,
+        }
+    }
+}
+
+impl LiveParams {
+    /// Build a JSON `set_params` command string for the simulator WebSocket.
+    pub fn to_set_params_json(&self) -> String {
+        format!(
+            concat!(
+                r#"{{"command":"set_params","params":{{"#,
+                r#""msg_damping":{},"internal_iters":{},"external_iters":{},"#,
+                r#""sigma_dynamics":{},"gbp_timestep":{},"#,
+                r#""d_safe":{},"sigma_interrobot":{},"ir_activation_range":{},"ir_decay_alpha":{},"front_damping":{},"#,
+                r#""v_min":{},"v_max_default":{},"vb_kappa":{},"vb_margin":{},"vb_max_precision":{},"#,
+                r#""max_accel":{},"max_jerk":{},"max_speed":{},"#,
+                r#""init_variance":{},"anchor_precision":{},"#,
+                r#""timescale":{}"#,
+                r#"}}}}"#,
+            ),
+            self.msg_damping, self.internal_iters, self.external_iters,
+            self.sigma_dynamics, self.gbp_timestep,
+            self.d_safe, self.sigma_interrobot, self.ir_activation_range, self.ir_decay_alpha, self.front_damping,
+            self.v_min, self.v_max_default, self.vb_kappa, self.vb_margin, self.vb_max_precision,
+            self.max_accel, self.max_jerk, self.max_speed,
+            self.init_variance, self.anchor_precision,
+            self.timescale,
+        )
+    }
+
+    /// Returns true if any field differs from `other` (float comparison uses small epsilon).
+    pub fn differs_from(&self, other: &Self) -> bool {
+        const EPS: f32 = 1e-6;
+        let f = |a: f32, b: f32| (a - b).abs() > EPS;
+        f(self.msg_damping, other.msg_damping)
+            || self.internal_iters != other.internal_iters
+            || self.external_iters != other.external_iters
+            || f(self.sigma_dynamics, other.sigma_dynamics)
+            || f(self.gbp_timestep, other.gbp_timestep)
+            || f(self.d_safe, other.d_safe)
+            || f(self.sigma_interrobot, other.sigma_interrobot)
+            || f(self.ir_activation_range, other.ir_activation_range)
+            || f(self.ir_decay_alpha, other.ir_decay_alpha)
+            || f(self.front_damping, other.front_damping)
+            || f(self.v_min, other.v_min)
+            || f(self.v_max_default, other.v_max_default)
+            || f(self.vb_kappa, other.vb_kappa)
+            || f(self.vb_margin, other.vb_margin)
+            || f(self.vb_max_precision, other.vb_max_precision)
+            || f(self.max_accel, other.max_accel)
+            || f(self.max_jerk, other.max_jerk)
+            || f(self.max_speed, other.max_speed)
+            || f(self.init_variance, other.init_variance)
+            || f(self.anchor_precision, other.anchor_precision)
+            || f(self.timescale, other.timescale)
+    }
+}
+
 /// Bevy resource: parsed map.
 #[derive(Resource)]
 pub struct MapRes(pub gbp_map::map::Map);
