@@ -1,9 +1,9 @@
 # VisApi Event System & Addon Expansion -- Status Report
 
 **Branch:** `feature/vis-addon-api`
-**Date:** 2026-03-23
+**Date:** 2026-03-24
 **Build:** `cargo build -p visualiser` -- PASS (0 warnings)
-**Tests:** `cargo test -p visualiser` -- 41/41 pass
+**Tests:** `cargo test -p visualiser` -- 47/47 pass
 
 ---
 
@@ -16,27 +16,33 @@ Three Bevy `Message` types (buffered, pull-based) that addons subscribe to via `
 | Message | Emitted When | Fields |
 |---------|-------------|--------|
 | `ProximityAlert` | Two robots closer than `ir_d_safe` | `robot_a`, `robot_b`, `distance`, `d_safe`, `position_a`, `position_b` |
-| `SimTickEvent` | Every frame | `tick`, `robot_count`, `total_ir_factors`, `min_pair_distance` |
+| `DataReceived` | New WS data processed | `tick`, `robot_count`, `total_ir_factors`, `min_pair_distance` |
 | `RobotStateChanged` | Robot state changes | `robot_id`, `event_type: RobotChangeType` |
 
 `RobotChangeType` variants: `Connected`, `Disconnected`, `EdgeChanged{from, to}`, `FactorCountChanged{from, to}`, `NearCollision{distance}`.
 
-### 2. Event Emission Systems (`vis_event_systems.rs`)
+### 2. Event Emission System (`vis_event_systems.rs`)
 
-Three systems registered by `VisEventPlugin`, all running in `Update`:
+Single `emit_events_on_data` system registered by `VisEventPlugin`, running in `Update` with `resource_changed::<RobotStates>` run condition. Only executes when `drain_ws_inbox` has processed new WebSocket data:
 
-- **`proximity_emitter`**: O(n^2) pairwise check, rate-limited to 1 alert/sec per pair via `ProximityRateLimiter` (HashMap with stale-entry pruning).
-- **`sim_tick_emitter`**: Emits every frame with aggregated data and a monotonic tick counter.
-- **`state_change_emitter`**: Compares current `RobotStates` against a `Local<PreviousRobotStates>` snapshot. Detects connects, disconnects, edge transitions, factor count changes, and near-collision rising edges.
+- **Proximity check**: O(n^2) pairwise, rate-limited to 1 alert/sec per pair via `ProximityRateLimiter` (HashMap with stale-entry pruning).
+- **State change detection**: Compares current `RobotStates` against a `Local<PreviousRobotStates>` snapshot. Detects connects, disconnects, edge transitions, factor count changes, and near-collision rising edges.
+- **DataReceived summary**: Aggregates robot count, total IR factors, and min pair distance into a single message.
 
-### 3. Example Addons
+Replaces three per-frame systems (`proximity_emitter`, `sim_tick_emitter`, `state_change_emitter`) with zero overhead on idle frames.
 
-| Addon | Env Var | Behavior |
-|-------|---------|----------|
-| `ProximityScreenshotAddon` | `VIS_PROXIMITY_SCREENSHOT=1` | Screenshots + logs on every `ProximityAlert` |
-| `StateChangeLoggerAddon` | `VIS_LOG_STATE_CHANGES=1` | Logs all `RobotStateChanged` messages |
+### 3. Config-Based Addon Settings (`addon_config.rs`)
 
-Both are gated behind env vars (disabled by default), registered in `AddonPlugins`.
+All addon settings live in `[addons]` section of `config/config.toml`, parsed into an `AddonConfig` resource:
+
+| Addon | Config Section | Behavior |
+|-------|---------------|----------|
+| `StartupScreenshotAddon` | `[addons.screenshot]` | Screenshot after delay, optional quit |
+| `DebugMonitorAddon` | `[addons.debug_monitor]` | Periodic robot state logging |
+| `ProximityScreenshotAddon` | `[addons.proximity_screenshot]` | Screenshots + logs on `ProximityAlert` |
+| `StateChangeLoggerAddon` | `[addons.state_change_logger]` | Logs all `RobotStateChanged` messages |
+
+All addons registered unconditionally. Each checks `config.enabled` at runtime, allowing toggle via the Addons UI panel without restart. Env var configuration removed.
 
 ### 4. VisApi Expansion
 
@@ -62,13 +68,16 @@ New methods added to the `VisApi` SystemParam:
 
 ## What Works
 
-- All 41 unit tests pass
+- All 47 unit tests pass
 - Clean build with 0 warnings from the visualiser crate
 - Event types are `derive(Message)` (Bevy 0.18 buffered messages)
 - Rate-limiting prevents proximity alert spam (1/sec per pair)
-- State change detection uses rising-edge for NearCollision (only emits on transition into danger zone, not every frame)
+- State change detection uses rising-edge for NearCollision (only emits on transition into danger zone)
 - Stale rate-limiter entries are pruned to prevent memory leaks
-- All addons gated behind env vars so they cost nothing when disabled
+- Change-triggered emission: zero overhead on idle frames (runs only when RobotStates mutated)
+- Config-based addon settings: TOML config + runtime UI toggles (sliders, text fields)
+- All addons registered unconditionally, check config.enabled at runtime
+- Addons can be toggled on/off at runtime without restart
 
 ---
 
@@ -78,7 +87,7 @@ New methods added to the `VisApi` SystemParam:
 
 2. **No integration tests for emission systems**: Unit tests cover helpers (dist_3d, constructibility, snapshot clone). Full emission testing would require a Bevy App harness with World + Schedule, which is not currently set up.
 
-3. **SimTickEvent emitted every frame**: No configurable decimation yet. Addons that want periodic updates can filter `tick % N == 0` themselves.
+3. **DataReceived emitted per WS batch**: Replaced per-frame SimTickEvent. Now only fires when drain_ws_inbox processes new data.
 
 4. **No event persistence/replay**: Events are consumed once per frame. There is no event log or replay buffer for post-hoc analysis.
 
@@ -191,16 +200,16 @@ fn on_proximity(
 }
 ```
 
-### SimTickEvent
+### DataReceived
 
-Emitted every frame with aggregate data. Useful for periodic monitoring.
+Emitted when new WebSocket data is processed (replaces per-frame SimTickEvent). Only fires when `drain_ws_inbox` mutates `RobotStates`.
 
 ```rust
-fn on_tick(mut ticks: MessageReader<SimTickEvent>) {
-    for tick in ticks.read() {
-        if tick.tick % 60 == 0 {
+fn on_data(mut batches: MessageReader<DataReceived>) {
+    for batch in batches.read() {
+        if batch.tick % 60 == 0 {
             tracing::info!("tick {} -- {} robots, min_dist={:.2}m",
-                tick.tick, tick.robot_count, tick.min_pair_distance);
+                batch.tick, batch.robot_count, batch.min_pair_distance);
         }
     }
 }
@@ -237,32 +246,34 @@ fn on_state_change(mut changes: MessageReader<RobotStateChanged>) {
 
 2. **Add** `mod my_addon;` to `addons/mod.rs`
 
-3. **Write the plugin:**
+3. **Write the plugin** (always registers systems; checks config at runtime):
 
 ```rust
 use bevy::prelude::*;
+use crate::addon_config::AddonConfig;
 use crate::vis_api::VisApi;
 
 pub struct MyAddon;
 
 impl Plugin for MyAddon {
     fn build(&self, app: &mut App) {
-        // Optional: gate behind env var
-        let enabled = std::env::var("VIS_MY_ADDON")
-            .map(|v| v == "1")
-            .unwrap_or(false);
-        if enabled {
-            app.add_systems(Update, my_system);
-        }
+        app.add_systems(Update, my_system);
     }
 }
 
-fn my_system(mut api: VisApi) {
+fn my_system(api: VisApi, config: Res<AddonConfig>) {
+    if !config.my_addon.enabled { return; }
     api.log(&format!("t={:.1}s robots={}", api.elapsed_secs(), api.robot_count()));
 }
 ```
 
-4. **Register** in `AddonPlugins::build`:
+4. **Add config struct** to `addon_config.rs` and add a field to `AddonConfig`.
+
+5. **Add config section** to `config/config.toml` under `[addons.my_addon]`.
+
+6. **Add UI controls** in the Addons section of `ui.rs`.
+
+7. **Register** in `AddonPlugins::build`:
 
 ```rust
 app.add_plugins(my_addon::MyAddon);
@@ -290,15 +301,17 @@ fn my_reactive_system(
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `vis_events.rs` | 241 | Event message type definitions |
-| `vis_event_systems.rs` | 413 | Emission systems + VisEventPlugin |
-| `vis_api.rs` | 301 | VisApi SystemParam (expanded) |
-| `addons/mod.rs` | 114 | Addon registry + documentation |
-| `addons/proximity_screenshot.rs` | 78 | Event-driven screenshot addon |
-| `addons/state_change_logger.rs` | 75 | Event-driven state logger addon |
+| `addon_config.rs` | ~175 | AddonConfig resource + serde deserialization |
+| `vis_events.rs` | ~242 | Event message type definitions (DataReceived, ProximityAlert, RobotStateChanged) |
+| `vis_event_systems.rs` | ~389 | Single change-triggered emission system + VisEventPlugin |
+| `vis_api.rs` | ~409 | VisApi SystemParam (expanded) |
+| `addons/mod.rs` | ~113 | Addon registry + documentation |
+| `addons/startup_screenshot.rs` | ~92 | Config-driven screenshot after delay |
+| `addons/debug_monitor.rs` | ~72 | Config-driven periodic robot state logging |
+| `addons/proximity_screenshot.rs` | ~84 | Config-driven screenshot on proximity alert |
+| `addons/state_change_logger.rs` | ~82 | Config-driven state change logger |
 
-**Total new code:** ~920 lines (including tests and documentation).
-**New tests:** 15 (events: 4, emission systems: 8, addons: 2, vis_api: 1).
+**New tests:** 21 (addon_config: 6, events: 4, emission systems: 8, addons: 2, vis_api: 1).
 
 ---
 
@@ -315,6 +328,14 @@ fn my_reactive_system(
 - **Round 1:** 8 comments — all addressed (set_draw_all struct literal, env var caching, Python compat, etc.)
 - **Round 2:** 2 comments — both fixed (O(n²) duplication eliminated, addons gated behind env vars)
 - All comments replied to on GitHub
+
+### Refactor Session (2026-03-24)
+- Replaced env-var addon configuration with TOML-based `AddonConfig` resource
+- Refactored 3 per-frame emission systems into 1 change-triggered system
+- Renamed `SimTickEvent` to `DataReceived` (emitted per WS batch, not per frame)
+- Added Addons UI panel with runtime toggles, sliders, and text fields
+- All addons now registered unconditionally; check `config.enabled` at runtime
+- 47 tests pass, 0 warnings
 
 ### Backup
 Branch `vis-addon-api-backup` at commit `2f5e29c` preserves the pre-event-system state for rollback if needed.
