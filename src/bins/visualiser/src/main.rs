@@ -5,6 +5,7 @@ mod camera;
 mod robot_render;
 mod ui;
 mod settings_panel;
+mod inspector;
 mod vis_api;
 mod vis_events;
 mod vis_event_systems;
@@ -25,6 +26,7 @@ use camera::CameraPlugin;
 use robot_render::RobotRenderPlugin;
 use ui::UiPlugin;
 use settings_panel::SettingsPanelPlugin;
+use inspector::InspectorPlugin;
 use addon_config::AddonConfig;
 use tracing_subscriber::EnvFilter;
 
@@ -268,6 +270,7 @@ fn main() {
         .add_plugins(RobotRenderPlugin)
         .add_plugins(UiPlugin)
         .add_plugins(SettingsPanelPlugin)
+        .add_plugins(InspectorPlugin)
         .add_plugins(addons::AddonPlugins)
         .run();
 

@@ -5,7 +5,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore};
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use crate::addon_config::AddonConfig;
-use crate::state::{DrawConfig, InspectorVisible, MetricsVisible, RobotStates};
+use crate::state::{DrawConfig, InspectorVisible, MetricsVisible, RobotStates, WsOutbox};
 
 /// Shared pause flag.
 #[derive(Resource, Default)]
@@ -92,6 +92,7 @@ fn draw_hud(
     mut draw: ResMut<DrawConfig>,
     mut gizmo_store: ResMut<GizmoConfigStore>,
     mut addon_config: ResMut<AddonConfig>,
+    outbox: Res<WsOutbox>,
     _metrics_vis: Res<MetricsVisible>,
     _inspector_vis: Res<InspectorVisible>,
 ) -> Result {
@@ -288,6 +289,25 @@ fn draw_hud(
                 } else { "—".into() };
                 stat_row(ui, "dist3d", &dist_str, dim);
                 stat_row(ui, "factors", &fmt_factor_count(state.active_factor_count), dim);
+
+                // Inspect button — sends inspect command to simulator for variable 0
+                ui.add_space(3.0);
+                if ui
+                    .small_button(
+                        egui::RichText::new("Inspect k=0")
+                            .size(10.0)
+                            .color(egui::Color32::from_rgb(180, 220, 255)),
+                    )
+                    .on_hover_text("Query detailed GBP variable diagnostics from simulator")
+                    .clicked()
+                {
+                    let cmd = format!(
+                        r#"{{"command":"inspect","robot_id":{},"variable_k":0}}"#,
+                        id
+                    );
+                    let mut q = outbox.0.lock().unwrap_or_else(|e| e.into_inner());
+                    q.push_back(cmd);
+                }
             });
         }
     }

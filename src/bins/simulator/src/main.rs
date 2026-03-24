@@ -221,6 +221,9 @@ async fn main() {
         ));
     }
 
+    // Clone all_runners for command handler (inspect command) before collision monitor moves it.
+    let cmd_runners = all_runners.clone();
+
     // ── N-robot collision monitor (10 Hz, pairwise 3D distance) ──
     let map_mon = Arc::clone(&map_arc);
     let d_safe = config.d_safe;
@@ -283,9 +286,10 @@ async fn main() {
         }
     });
 
-    // Command handler (pause/resume/step/set_timescale/set_params)
+    // Command handler (pause/resume/step/set_timescale/set_params/inspect)
     let cmd_sim_state = Arc::clone(&sim_state);
     let cmd_tick_interval_us = Arc::clone(&tick_interval_us);
+    let cmd_tx_json = tx_json.clone();
     // config_tx is moved into the command handler so it can send new configs.
     tokio::spawn(async move {
         while let Some(json) = cmd_rx.recv().await {
@@ -345,6 +349,44 @@ async fn main() {
                                 }
                             } else {
                                 warn!("set_params: missing 'params' field");
+                            }
+                        }
+                        "inspect" => {
+                            if let (Some(robot_id), Some(var_k)) = (
+                                v.get("robot_id").and_then(|r| r.as_u64()),
+                                v.get("variable_k").and_then(|k| k.as_u64()),
+                            ) {
+                                let robot_id = robot_id as usize;
+                                let var_k = var_k as usize;
+                                if let Some(runner) = cmd_runners.get(robot_id) {
+                                    let data = runner.lock().unwrap_or_else(|e| e.into_inner()).inspect_variable(var_k);
+                                    // Build factor summaries JSON array
+                                    let mut factors_json = String::from("[");
+                                    for (i, fs) in data.factor_summaries.iter().enumerate() {
+                                        if i > 0 { factors_json.push(','); }
+                                        let kind_str = match fs.kind {
+                                            gbp_agent::robot_agent::FactorKindTag::Dynamics      => "Dynamics",
+                                            gbp_agent::robot_agent::FactorKindTag::VelocityBound => "VelocityBound",
+                                            gbp_agent::robot_agent::FactorKindTag::InterRobot    => "InterRobot",
+                                        };
+                                        factors_json.push_str(&format!(
+                                            r#"{{"kind":"{}","msg_eta":{},"msg_lambda":{}}}"#,
+                                            kind_str, fs.msg_eta, fs.msg_lambda
+                                        ));
+                                    }
+                                    factors_json.push(']');
+                                    let response = format!(
+                                        r#"{{"type":"inspect_response","robot_id":{},"variable_k":{},"mean":{},"variance":{},"factors":{}}}"#,
+                                        robot_id, var_k, data.mean, data.variance, factors_json
+                                    );
+                                    info!("inspect R{} k={}: mean={:.3} var={:.3} factors={}",
+                                        robot_id, var_k, data.mean, data.variance, data.num_connected_factors);
+                                    let _ = cmd_tx_json.send(response);
+                                } else {
+                                    warn!("inspect: robot_id {} not found (have {} robots)", robot_id, cmd_runners.len());
+                                }
+                            } else {
+                                warn!("inspect: missing robot_id or variable_k");
                             }
                         }
                         _ => {}

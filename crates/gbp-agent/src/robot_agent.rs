@@ -7,6 +7,33 @@ use crate::trajectory::Trajectory;
 use crate::interrobot_set::InterRobotFactorSet;
 use crate::dynamic_constraints::DynamicConstraints;
 
+/// Tag enum for FactorKind variant — no_std, Copy, serializable with postcard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FactorKindTag {
+    Dynamics,
+    VelocityBound,
+    InterRobot,
+}
+
+/// Per-factor summary for inspect_variable output.
+#[derive(Clone, Copy, Debug)]
+pub struct InspectFactorSummary {
+    pub kind: FactorKindTag,
+    pub msg_eta: f32,
+    pub msg_lambda: f32,
+}
+
+/// Detailed per-variable diagnostic data returned by inspect_variable().
+#[derive(Clone, Debug)]
+pub struct InspectData {
+    pub mean: f32,
+    pub variance: f32,
+    pub eta: f32,
+    pub lambda: f32,
+    pub num_connected_factors: u8,
+    pub factor_summaries: heapless::Vec<InspectFactorSummary, 16>,
+}
+
 /// Number of dynamics factors = K-1 (one per adjacent timestep pair)
 const NUM_DYN_FACTORS: usize = MAX_HORIZON - 1;
 /// Max inter-robot factors = one per variable per neighbour (K * MAX_NEIGHBOURS)
@@ -247,6 +274,56 @@ impl<C: CommsInterface> RobotAgent<C> {
             vars[i] = v.variance().min(1e6);
         }
         vars
+    }
+
+    /// Return detailed diagnostic data for variable `k`.
+    /// Walks all factor nodes to find those connected to variable `k`.
+    pub fn inspect_variable(&self, k: usize) -> InspectData {
+        let var = if k < self.graph.variables.len() {
+            &self.graph.variables[k]
+        } else {
+            // k out of range — return zero data
+            return InspectData {
+                mean: 0.0, variance: 0.0, eta: 0.0, lambda: 0.0,
+                num_connected_factors: 0,
+                factor_summaries: heapless::Vec::new(),
+            };
+        };
+
+        let mean = var.mean();
+        let variance = var.variance().min(1e6);
+        let eta = var.eta;
+        let lambda = var.lambda;
+
+        let mut summaries: heapless::Vec<InspectFactorSummary, 16> = heapless::Vec::new();
+
+        for fnode in self.graph.iter_factor_nodes() {
+            let var_indices = fnode.kind.as_factor().variable_indices();
+            // Find which slot (0 or 1) this variable occupies in the factor
+            let slot = var_indices.iter().position(|&vi| vi == k);
+            if let Some(slot_idx) = slot {
+                let kind_tag = match &fnode.kind {
+                    FactorKind::Dynamics(_)      => FactorKindTag::Dynamics,
+                    FactorKind::VelocityBound(_) => FactorKindTag::VelocityBound,
+                    FactorKind::InterRobot(_)    => FactorKindTag::InterRobot,
+                };
+                let summary = InspectFactorSummary {
+                    kind: kind_tag,
+                    msg_eta: fnode.msg_eta[slot_idx],
+                    msg_lambda: fnode.msg_lambda[slot_idx],
+                };
+                let _ = summaries.push(summary);
+            }
+        }
+
+        InspectData {
+            mean,
+            variance,
+            eta,
+            lambda,
+            num_connected_factors: summaries.len().min(255) as u8,
+            factor_summaries: summaries,
+        }
     }
 
     /// Run one step of GBP and return commanded velocity.

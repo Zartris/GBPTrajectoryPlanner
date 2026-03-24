@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use tokio::sync::{broadcast, watch};
 use tokio::time::{interval, Duration};
-use gbp_agent::RobotAgent;
+use gbp_agent::{RobotAgent, robot_agent::InspectData};
 use gbp_comms::{CommsInterface, ObservationUpdate, RobotBroadcast, RobotStateMsg, RobotSource};
 use gbp_core::GbpConfig;
 use gbp_map::map::{EdgeId, Map};
@@ -140,6 +140,11 @@ impl AgentRunner {
     /// Propagate a new GbpConfig into the agent (live config hot-reload).
     pub fn apply_config(&mut self, config: &GbpConfig) {
         self.agent.update_config(config);
+    }
+
+    /// Return detailed diagnostic data for variable `k` (delegates to RobotAgent).
+    pub fn inspect_variable(&self, k: usize) -> InspectData {
+        self.agent.inspect_variable(k)
     }
 
     /// Edge IDs for the planned path (for visualiser dashed gizmo).

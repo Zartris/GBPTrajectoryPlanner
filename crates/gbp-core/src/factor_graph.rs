@@ -70,6 +70,11 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
         self.factors.get_mut(idx).map(|f| &mut f.kind)
     }
 
+    /// Iterate over all FactorNodes (immutable). Used by inspect_variable.
+    pub fn iter_factor_nodes(&self) -> impl Iterator<Item = &FactorNode> {
+        self.factors.iter()
+    }
+
     /// Run N iterations of damped GBP message passing.
     pub fn iterate(&mut self, iterations: usize) {
         for _ in 0..iterations {
