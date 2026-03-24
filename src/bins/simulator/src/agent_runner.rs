@@ -3,7 +3,7 @@
 //! Which edge the robot is on is derived from the trajectory, not managed by physics.
 
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
 use gbp_agent::RobotAgent;
@@ -171,18 +171,38 @@ pub struct StepOut {
     pub belief_spread: f32,
 }
 
-/// Runs at 50 Hz: reads global position, steps agent, writes velocity back.
+/// Runs at configurable rate (default 50 Hz): reads global position, steps agent, writes velocity back.
+/// sim_state: -1 = running, 0 = paused, N>0 = step N ticks then pause.
+/// tick_interval_us: microseconds per tick (default 20_000 = 50 Hz).
 pub async fn agent_task(
     physics: Arc<Mutex<PhysicsState>>,
     runner: Arc<Mutex<AgentRunner>>,
     tx: broadcast::Sender<RobotStateMsg>,
     robot_id: u32,
-    paused: Arc<AtomicBool>,
+    sim_state: Arc<AtomicI32>,
+    tick_interval_us: Arc<AtomicU32>,
 ) {
-    let mut ticker = interval(Duration::from_millis(20)); // 50 Hz (matches physics)
+    let mut current_us = tick_interval_us.load(Ordering::Relaxed);
+    let mut ticker = interval(Duration::from_micros(current_us as u64));
     loop {
         ticker.tick().await;
-        if paused.load(Ordering::Relaxed) { continue; }
+
+        // Check if interval changed; if so, reset ticker.
+        let new_us = tick_interval_us.load(Ordering::Relaxed);
+        if new_us != current_us {
+            current_us = new_us;
+            ticker = interval(Duration::from_micros(current_us as u64));
+        }
+
+        let state_val = sim_state.load(Ordering::Relaxed);
+        if state_val == 0 {
+            // Paused — skip.
+            continue;
+        } else if state_val > 0 {
+            // Step mode: run this tick; physics_task handles the decrement — no double-decrement here.
+            // We just check whether to run; the physics_task is the authoritative decrementer.
+        }
+        // state_val == -1 (running) or step mode: proceed with agent step.
 
         let global_s = physics.lock().unwrap_or_else(|e| e.into_inner()).position_s;
 

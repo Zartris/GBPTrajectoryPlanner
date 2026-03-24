@@ -1,6 +1,6 @@
 // src/bins/simulator/src/physics.rs
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use tokio::time::{interval, Duration};
 
 /// Shared mutable physics state for one robot.
@@ -32,14 +32,42 @@ impl PhysicsState {
     }
 }
 
-/// Runs at 50 Hz, integrating position from velocity. Skips when paused.
-pub async fn physics_task(state: Arc<Mutex<PhysicsState>>, paused: Arc<AtomicBool>) {
-    const DT: f32 = 1.0 / 50.0;
-    let mut ticker = interval(Duration::from_millis(20)); // 50 Hz
+/// Runs at configurable rate (default 50 Hz), integrating position from velocity.
+/// sim_state: -1 = running, 0 = paused, N>0 = step N ticks then pause.
+/// tick_interval_us: microseconds per tick (default 20_000 = 50 Hz).
+pub async fn physics_task(
+    state: Arc<Mutex<PhysicsState>>,
+    sim_state: Arc<AtomicI32>,
+    tick_interval_us: Arc<AtomicU32>,
+) {
+    let mut current_us = tick_interval_us.load(Ordering::Relaxed);
+    let mut ticker = interval(Duration::from_micros(current_us as u64));
     loop {
         ticker.tick().await;
-        if paused.load(Ordering::Relaxed) { continue; }
-        state.lock().unwrap_or_else(|e| e.into_inner()).step(DT);
+
+        // Check if interval changed; if so, reset ticker.
+        let new_us = tick_interval_us.load(Ordering::Relaxed);
+        if new_us != current_us {
+            current_us = new_us;
+            ticker = interval(Duration::from_micros(current_us as u64));
+        }
+
+        let state_val = sim_state.load(Ordering::Relaxed);
+        if state_val == 0 {
+            // Paused — skip.
+            continue;
+        } else if state_val > 0 {
+            // Step mode: run this tick, then decrement. Use CAS to avoid races.
+            let _ = sim_state.compare_exchange(
+                state_val,
+                state_val - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
+        }
+        // state_val == -1 (running) or step mode tick: integrate physics.
+        let dt = current_us as f32 / 1_000_000.0;
+        state.lock().unwrap_or_else(|e| e.into_inner()).step(dt);
     }
 }
 

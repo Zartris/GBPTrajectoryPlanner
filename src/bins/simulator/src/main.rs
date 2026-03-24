@@ -6,7 +6,7 @@ pub mod agent_runner;
 pub mod toml_config;
 
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use tokio::sync::{broadcast, mpsc};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -115,8 +115,11 @@ async fn main() {
 
     let (bcast_tx, _) = broadcast::channel::<RobotBroadcast>(64);
 
-    // Shared pause flag — checked by physics and agent tasks
-    let sim_paused = Arc::new(AtomicBool::new(false));
+    // Shared simulation state — checked by physics and agent tasks.
+    // -1 = running, 0 = paused, N>0 = run N ticks then pause.
+    let sim_state = Arc::new(AtomicI32::new(-1));
+    // Tick interval in microseconds (default 20_000 = 50 Hz).
+    let tick_interval_us = Arc::new(AtomicU32::new(20_000));
 
     // Relay: RobotStateMsg -> JSON
     // Envelope wraps any payload with a `"type"` discriminator in a single serialization pass,
@@ -197,9 +200,18 @@ async fn main() {
         all_runners.push(Arc::clone(&runner_arc));
         all_physics.push(Arc::clone(&physics));
 
-        tokio::spawn(physics::physics_task(Arc::clone(&physics), Arc::clone(&sim_paused)));
+        tokio::spawn(physics::physics_task(
+            Arc::clone(&physics),
+            Arc::clone(&sim_state),
+            Arc::clone(&tick_interval_us),
+        ));
         tokio::spawn(agent_task(
-            Arc::clone(&physics), runner_arc, tx_state.clone(), i as u32, Arc::clone(&sim_paused)
+            Arc::clone(&physics),
+            runner_arc,
+            tx_state.clone(),
+            i as u32,
+            Arc::clone(&sim_state),
+            Arc::clone(&tick_interval_us),
         ));
     }
 
@@ -265,15 +277,43 @@ async fn main() {
         }
     });
 
-    // Command handler (pause/resume)
-    let pause_cmd = Arc::clone(&sim_paused);
+    // Command handler (pause/resume/step/set_timescale)
+    let cmd_sim_state = Arc::clone(&sim_state);
+    let cmd_tick_interval_us = Arc::clone(&tick_interval_us);
     tokio::spawn(async move {
         while let Some(json) = cmd_rx.recv().await {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
                 if let Some(cmd) = v.get("command").and_then(|c| c.as_str()) {
                     match cmd {
-                        "pause" => { pause_cmd.store(true, Ordering::Relaxed); info!("simulation PAUSED"); }
-                        "resume" => { pause_cmd.store(false, Ordering::Relaxed); info!("simulation RESUMED"); }
+                        "pause" => {
+                            cmd_sim_state.store(0, Ordering::Relaxed);
+                            info!("simulation PAUSED");
+                        }
+                        "resume" => {
+                            cmd_sim_state.store(-1, Ordering::Relaxed);
+                            info!("simulation RESUMED");
+                        }
+                        "step" => {
+                            let ticks = v.get("ticks")
+                                .and_then(|t| t.as_i64())
+                                .unwrap_or(1)
+                                .max(1) as i32;
+                            cmd_sim_state.store(ticks, Ordering::Relaxed);
+                            info!("simulation STEP {} ticks", ticks);
+                        }
+                        "set_timescale" => {
+                            if let Some(scale) = v.get("scale").and_then(|s| s.as_f64()) {
+                                if scale > 0.0 {
+                                    let us = (20_000.0 / scale) as u32;
+                                    cmd_tick_interval_us.store(us, Ordering::Relaxed);
+                                    info!("simulation timescale={:.3}x tick_interval={}us", scale, us);
+                                } else {
+                                    warn!("set_timescale: scale must be > 0, got {}", scale);
+                                }
+                            } else {
+                                warn!("set_timescale: missing or invalid 'scale' field");
+                            }
+                        }
                         _ => {}
                     }
                 }
