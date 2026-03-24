@@ -160,6 +160,7 @@ impl RobotState {
 pub struct RobotStates(pub HashMap<u32, RobotState>);
 
 /// Collision event received from simulator.
+// Scaffolding — simulator sends these in later M6b tasks
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct CollisionEvent {
     pub robot_a: u32,
@@ -169,6 +170,7 @@ pub struct CollisionEvent {
 }
 
 /// Response to a click-to-inspect query.
+// Scaffolding — simulator sends these in later M6b tasks
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct InspectResponse {
     pub robot_id: u32,
@@ -186,12 +188,34 @@ pub struct InspectFactorInfo {
 }
 
 /// Bevy resource: queue of collision events from simulator.
-#[derive(Resource, Default)]
+///
+/// # Construction
+/// Must be explicitly constructed — do not rely on `Default`.
+/// The inner `Arc<Mutex<VecDeque>>` must be shared with the WS client thread,
+/// so construction and wiring must happen together.
+#[derive(Resource)]
 pub struct CollisionInbox(pub Arc<Mutex<VecDeque<CollisionEvent>>>);
 
+impl CollisionInbox {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(VecDeque::new())))
+    }
+}
+
 /// Bevy resource: queue of inspect responses from simulator.
-#[derive(Resource, Default)]
+///
+/// # Construction
+/// Must be explicitly constructed — do not rely on `Default`.
+/// The inner `Arc<Mutex<VecDeque>>` must be shared with the WS client thread,
+/// so construction and wiring must happen together.
+#[derive(Resource)]
 pub struct InspectInbox(pub Arc<Mutex<VecDeque<InspectResponse>>>);
+
+impl InspectInbox {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(VecDeque::new())))
+    }
+}
 
 /// Maximum number of positions retained per robot in the trace ring buffer.
 pub const TRACE_CAP: usize = 10_000;

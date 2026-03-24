@@ -13,6 +13,14 @@ use tokio_tungstenite::tungstenite::Message;
 use gbp_comms::RobotStateMsg;
 use tracing::{info, warn, error};
 
+/// Push `item` onto a capped deque, evicting the oldest entry when at capacity.
+fn push_capped<T>(q: &mut std::collections::VecDeque<T>, item: T) {
+    if q.len() >= WS_INBOX_CAP {
+        q.pop_front();
+    }
+    q.push_back(item);
+}
+
 /// Spawn a background thread running a tokio runtime for WebSocket connection.
 /// Returns a shutdown flag: set it to `true` to stop the reconnect loop.
 pub fn spawn_ws_client(
@@ -70,8 +78,7 @@ pub fn spawn_ws_client(
                                                     match serde_json::from_value::<RobotStateMsg>(val) {
                                                         Ok(state) => {
                                                             let mut q = inbox.lock().unwrap_or_else(|e| e.into_inner());
-                                                            if q.len() >= WS_INBOX_CAP { q.pop_front(); }
-                                                            q.push_back(state);
+                                                            push_capped(&mut q, state);
                                                         }
                                                         Err(e) => warn!("bad state msg: {}", e),
                                                     }
@@ -80,8 +87,7 @@ pub fn spawn_ws_client(
                                                     match serde_json::from_value::<CollisionEvent>(val) {
                                                         Ok(ev) => {
                                                             let mut q = collision_inbox.lock().unwrap_or_else(|e| e.into_inner());
-                                                            if q.len() >= WS_INBOX_CAP { q.pop_front(); }
-                                                            q.push_back(ev);
+                                                            push_capped(&mut q, ev);
                                                         }
                                                         Err(e) => warn!("bad collision msg: {}", e),
                                                     }
@@ -90,8 +96,7 @@ pub fn spawn_ws_client(
                                                     match serde_json::from_value::<InspectResponse>(val) {
                                                         Ok(resp) => {
                                                             let mut q = inspect_inbox.lock().unwrap_or_else(|e| e.into_inner());
-                                                            if q.len() >= WS_INBOX_CAP { q.pop_front(); }
-                                                            q.push_back(resp);
+                                                            push_capped(&mut q, resp);
                                                         }
                                                         Err(e) => warn!("bad inspect_response msg: {}", e),
                                                     }
@@ -167,5 +172,61 @@ mod tests {
         assert!(!flag.load(Ordering::Relaxed));
         flag.store(true, Ordering::Relaxed);
         assert!(flag.load(Ordering::Relaxed));
+    }
+
+    // ── Type dispatch tests ──────────────────────────────────────────────────
+
+    /// Simulate the dispatch logic used inside the WS receive loop.
+    /// Extracts `"type"` field, defaults to `"state"` when absent.
+    fn dispatch_type(json: &str) -> &'static str {
+        let val: serde_json::Value = serde_json::from_str(json).expect("valid JSON");
+        match val.get("type").and_then(|t| t.as_str()).unwrap_or("state") {
+            "state" => "state",
+            "collision" => "collision",
+            "inspect_response" => "inspect_response",
+            _ => "unknown",
+        }
+    }
+
+    #[test]
+    fn dispatch_state_type() {
+        // JSON with explicit "type":"state" should parse as a state message.
+        let json = r#"{"type":"state","robot_id":0,"current_edge":0,"position_s":0.0,"velocity":0.0,"pos_3d":[0,0,0],"source":"Simulated","belief_means":[0,0,0,0,0,0,0,0,0,0,0,0],"belief_vars":[0,0,0,0,0,0,0,0,0,0,0,0],"planned_edges":[],"active_factors":[],"ir_factor_count":0,"active_ir_timesteps":[],"raw_gbp_velocity":0.0,"min_neighbour_dist_3d":1e38}"#;
+        assert_eq!(dispatch_type(json), "state");
+        // Confirm it also actually deserializes into RobotStateMsg
+        let val: serde_json::Value = serde_json::from_str(json).unwrap();
+        let msg: RobotStateMsg = serde_json::from_value(val).expect("deserialize state");
+        assert_eq!(msg.robot_id, 0);
+    }
+
+    #[test]
+    fn dispatch_collision_type() {
+        use crate::state::CollisionEvent;
+        let json = r#"{"type":"collision","robot_a":1,"robot_b":2,"pos":[1.0,2.0,3.0],"dist":0.5}"#;
+        assert_eq!(dispatch_type(json), "collision");
+        // Confirm it also actually deserializes into CollisionEvent
+        let val: serde_json::Value = serde_json::from_str(json).unwrap();
+        let ev: CollisionEvent = serde_json::from_value(val).expect("deserialize collision");
+        assert_eq!(ev.robot_a, 1);
+        assert_eq!(ev.robot_b, 2);
+        assert!((ev.dist - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn dispatch_missing_type_falls_back_to_state() {
+        // JSON without "type" field should default to "state" dispatch.
+        let json = r#"{"robot_id":7,"current_edge":0,"position_s":1.0,"velocity":0.5,"pos_3d":[1,0,0],"source":"Simulated","belief_means":[0,0,0,0,0,0,0,0,0,0,0,0],"belief_vars":[0,0,0,0,0,0,0,0,0,0,0,0],"planned_edges":[],"active_factors":[],"ir_factor_count":0,"active_ir_timesteps":[],"raw_gbp_velocity":0.0,"min_neighbour_dist_3d":1e38}"#;
+        assert_eq!(dispatch_type(json), "state");
+        // Confirm it also actually deserializes
+        let val: serde_json::Value = serde_json::from_str(json).unwrap();
+        let msg: RobotStateMsg = serde_json::from_value(val).expect("deserialize fallback state");
+        assert_eq!(msg.robot_id, 7);
+    }
+
+    #[test]
+    fn dispatch_unknown_type_does_not_panic() {
+        // Unknown type should yield "unknown" without panicking.
+        let json = r#"{"type":"future_feature","data":"something"}"#;
+        assert_eq!(dispatch_type(json), "unknown");
     }
 }

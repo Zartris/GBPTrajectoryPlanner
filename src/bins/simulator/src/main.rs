@@ -119,23 +119,25 @@ async fn main() {
     let sim_paused = Arc::new(AtomicBool::new(false));
 
     // Relay: RobotStateMsg -> JSON
+    // Envelope wraps any payload with a `"type"` discriminator in a single serialization pass,
+    // avoiding the double-allocation of to_value() + to_string().
+    #[derive(serde::Serialize)]
+    struct Envelope<'a, T: serde::Serialize> {
+        #[serde(rename = "type")]
+        msg_type: &'a str,
+        #[serde(flatten)]
+        payload: &'a T,
+    }
+
     let tx_json_relay = tx_json.clone();
     let mut rx_state = tx_state.subscribe();
     tokio::spawn(async move {
         loop {
             match rx_state.recv().await {
                 Ok(msg) => {
-                    match serde_json::to_value(&msg) {
-                        Ok(mut val) => {
-                            if let Some(obj) = val.as_object_mut() {
-                                obj.insert("type".to_string(), serde_json::Value::String("state".to_string()));
-                            }
-                            match serde_json::to_string(&val) {
-                                Ok(json) => { let _ = tx_json_relay.send(json); }
-                                Err(e) => tracing::error!("relay: JSON serialize failed: {}", e),
-                            }
-                        }
-                        Err(e) => tracing::error!("relay: JSON value failed: {}", e),
+                    match serde_json::to_string(&Envelope { msg_type: "state", payload: &msg }) {
+                        Ok(json) => { let _ = tx_json_relay.send(json); }
+                        Err(e) => tracing::error!("relay: JSON serialize failed: {}", e),
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
