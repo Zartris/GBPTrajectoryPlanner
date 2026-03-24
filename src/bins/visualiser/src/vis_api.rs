@@ -375,14 +375,14 @@ impl<'w, 's> VisApi<'w, 's> {
         q.push_back(json.to_owned());
     }
 
-    /// Send a `{"cmd":"pause"}` command to the simulator.
+    /// Send a `{"command":"pause"}` command to the simulator.
     pub fn pause_sim(&mut self) {
-        self.send_sim_command(r#"{"cmd":"pause"}"#);
+        self.send_sim_command(r#"{"command":"pause"}"#);
     }
 
-    /// Send a `{"cmd":"resume"}` command to the simulator.
+    /// Send a `{"command":"resume"}` command to the simulator.
     pub fn resume_sim(&mut self) {
-        self.send_sim_command(r#"{"cmd":"resume"}"#);
+        self.send_sim_command(r#"{"command":"resume"}"#);
     }
 
     // =========================================================================
