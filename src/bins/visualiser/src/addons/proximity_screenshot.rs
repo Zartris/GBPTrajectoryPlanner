@@ -71,9 +71,10 @@ fn proximity_screenshot_system(
             alert.position_b[2],
         ));
 
+        let dir = &config.proximity_screenshot.output_dir;
         let path = format!(
-            "/tmp/proximity_{}_{}_{}.png",
-            alert.robot_a, alert.robot_b, idx
+            "{}/proximity_{}_{}_{}.png",
+            dir, alert.robot_a, alert.robot_b, idx
         );
         api.screenshot(&path);
     }

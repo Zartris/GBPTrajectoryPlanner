@@ -22,6 +22,7 @@
 //!
 //! [addons.proximity_screenshot]
 //! enabled = false
+//! output_dir = "/tmp"
 //!
 //! [addons.state_change_logger]
 //! enabled = false
@@ -111,11 +112,17 @@ impl Default for DebugMonitorConfig {
 pub struct ProximityScreenshotConfig {
     /// Whether the addon is active.
     pub enabled: bool,
+    /// Output directory for proximity screenshot PNGs.
+    /// Files are named `proximity_{robotA}_{robotB}_{timestamp}.png`.
+    pub output_dir: String,
 }
 
 impl Default for ProximityScreenshotConfig {
     fn default() -> Self {
-        Self { enabled: false }
+        Self {
+            enabled: false,
+            output_dir: "/tmp".to_string(),
+        }
     }
 }
 
