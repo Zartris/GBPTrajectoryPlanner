@@ -33,6 +33,9 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
 
     pub fn factor_count(&self) -> usize { self.factors.len() }
 
+    /// Update message damping (live config propagation).
+    pub fn set_msg_damping(&mut self, damping: f32) { self.msg_damping = damping; }
+
     /// Re-accumulate variable beliefs from scratch (prior + all factor messages).
     /// Call after adding/removing factors to clear stale message contributions.
     pub fn reaccumulate_beliefs(&mut self) {

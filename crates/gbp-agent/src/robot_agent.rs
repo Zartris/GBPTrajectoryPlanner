@@ -193,6 +193,52 @@ impl<C: CommsInterface> RobotAgent<C> {
     pub fn last_max_position(&self) -> f32 { self.last_max_position }
     pub fn set_pos_3d(&mut self, pos: [f32; 3]) { self.pos_3d = pos; }
 
+    /// Apply a new GbpConfig at runtime — propagates all changed parameters into
+    /// factors and constraints without restarting the agent.
+    pub fn update_config(&mut self, config: &GbpConfig) {
+        self.config = *config;
+
+        // Dynamics factors: sigma and timestep
+        for &dyn_idx in self.dyn_indices.iter() {
+            if let Some(FactorKind::Dynamics(df)) = self.graph.get_factor_kind_mut(dyn_idx) {
+                df.set_sigma(config.sigma_dynamics);
+                df.set_timestep(config.gbp_timestep);
+            }
+        }
+
+        // VelocityBound factors: v_min, kappa, margin, max_precision
+        // (v_max is set per-step from edge speed, so don't override it here)
+        for &vb_idx in self.vel_bound_indices.iter() {
+            if let Some(FactorKind::VelocityBound(vbf)) = self.graph.get_factor_kind_mut(vb_idx) {
+                vbf.set_v_min(config.v_min);
+                vbf.set_kappa(config.vb_kappa);
+                vbf.set_margin(config.vb_margin);
+                vbf.set_max_precision(config.vb_max_precision);
+            }
+        }
+
+        // InterRobot factors: d_safe, sigma, decay_alpha
+        let ir_indices: Vec<usize, MAX_IR_FACTORS> = self.ir_set.iter()
+            .map(|&(_, _, fidx)| fidx)
+            .collect();
+        for fidx in ir_indices.iter() {
+            if let Some(FactorKind::InterRobot(irf)) = self.graph.get_factor_kind_mut(*fidx) {
+                irf.set_d_safe(config.d_safe);
+                irf.set_sigma(config.sigma_interrobot);
+                irf.set_decay_alpha(config.ir_decay_alpha);
+            }
+        }
+
+        // Message damping
+        self.graph.set_msg_damping(config.msg_damping);
+
+        // Post-GBP dynamic constraints
+        self.constraints.max_accel = config.max_accel;
+        self.constraints.max_jerk = config.max_jerk;
+        self.constraints.max_speed = config.max_speed;
+        self.constraints.v_min = config.v_min;
+    }
+
     /// Current belief variances (marginal, for visualiser).
     pub fn belief_vars(&self) -> [f32; MAX_HORIZON] {
         let mut vars = [0.0f32; MAX_HORIZON];

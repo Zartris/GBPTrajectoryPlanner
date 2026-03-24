@@ -48,6 +48,9 @@ impl InterRobotFactor {
     }
 
     pub fn set_active(&mut self, active: bool) { self.active = active; }
+    pub fn set_d_safe(&mut self, d_safe: f32) { self.d_safe = d_safe; }
+    pub fn set_sigma(&mut self, sigma: f32) { self.sigma_r = f32::max(sigma, 1e-6); }
+    pub fn set_decay_alpha(&mut self, alpha: f32) { self.decay_alpha = alpha; }
 
     /// Update which variable this factor constrains (e.g. the timestep
     /// where this robot is predicted to be closest to the neighbour).
