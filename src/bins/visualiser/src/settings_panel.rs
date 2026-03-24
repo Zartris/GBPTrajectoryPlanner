@@ -186,18 +186,19 @@ fn detect_param_changes(
     outbox: Res<WsOutbox>,
     mut last_sent: Local<Option<LiveParams>>,
 ) {
-    let changed = match last_sent.as_ref() {
-        None => true, // first frame — send initial state
-        Some(prev) => params.differs_from(prev),
+    let (gbp_changed, timescale_changed) = match last_sent.as_ref() {
+        None => (true, true), // first frame — send initial state
+        Some(prev) => (params.gbp_params_differ_from(prev), params.timescale_differs_from(prev)),
     };
 
-    if changed {
-        let json = params.to_set_params_json();
-        outbox
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push_back(json);
+    if gbp_changed || timescale_changed {
+        let mut q = outbox.0.lock().unwrap_or_else(|e| e.into_inner());
+        if gbp_changed {
+            q.push_back(params.to_set_params_json());
+        }
+        if timescale_changed {
+            q.push_back(params.to_set_timescale_json());
+        }
         *last_sent = Some(params.clone());
     }
 }
@@ -274,11 +275,17 @@ mod tests {
         assert!(json.starts_with(r#"{"command":"set_params","params":{"#));
         assert!(json.ends_with("}}"));
         assert!(json.contains("\"msg_damping\""));
-        assert!(json.contains("\"timescale\""));
+        // timescale is sent via separate set_timescale command, not in set_params
+        assert!(!json.contains("\"timescale\""));
         // Should parse as valid JSON
         let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(v["command"], "set_params");
         assert!((v["params"]["msg_damping"].as_f64().unwrap() - 0.5).abs() < 1e-6);
+        // Timescale command
+        let ts_json = p.to_set_timescale_json();
+        let ts: serde_json::Value = serde_json::from_str(&ts_json).expect("valid JSON");
+        assert_eq!(ts["command"], "set_timescale");
+        assert!((ts["scale"].as_f64().unwrap() - 1.0).abs() < 1e-6);
     }
 
     #[test]

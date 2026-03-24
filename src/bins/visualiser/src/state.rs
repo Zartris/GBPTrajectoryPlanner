@@ -328,6 +328,7 @@ impl Default for LiveParams {
 
 impl LiveParams {
     /// Build a JSON `set_params` command string for the simulator WebSocket.
+    /// Note: timescale is NOT included — it uses a separate `set_timescale` command.
     pub fn to_set_params_json(&self) -> String {
         format!(
             concat!(
@@ -337,8 +338,7 @@ impl LiveParams {
                 r#""d_safe":{},"sigma_interrobot":{},"ir_activation_range":{},"ir_decay_alpha":{},"front_damping":{},"#,
                 r#""v_min":{},"v_max_default":{},"vb_kappa":{},"vb_margin":{},"vb_max_precision":{},"#,
                 r#""max_accel":{},"max_jerk":{},"max_speed":{},"#,
-                r#""init_variance":{},"anchor_precision":{},"#,
-                r#""timescale":{}"#,
+                r#""init_variance":{},"anchor_precision":{}"#,
                 r#"}}}}"#,
             ),
             self.msg_damping, self.internal_iters, self.external_iters,
@@ -347,12 +347,16 @@ impl LiveParams {
             self.v_min, self.v_max_default, self.vb_kappa, self.vb_margin, self.vb_max_precision,
             self.max_accel, self.max_jerk, self.max_speed,
             self.init_variance, self.anchor_precision,
-            self.timescale,
         )
     }
 
-    /// Returns true if any field differs from `other` (float comparison uses small epsilon).
-    pub fn differs_from(&self, other: &Self) -> bool {
+    /// Build a JSON `set_timescale` command string.
+    pub fn to_set_timescale_json(&self) -> String {
+        format!(r#"{{"command":"set_timescale","scale":{}}}"#, self.timescale)
+    }
+
+    /// Whether only the timescale changed (not the GBP params).
+    pub fn gbp_params_differ_from(&self, other: &Self) -> bool {
         const EPS: f32 = 1e-6;
         let f = |a: f32, b: f32| (a - b).abs() > EPS;
         f(self.msg_damping, other.msg_damping)
@@ -375,7 +379,16 @@ impl LiveParams {
             || f(self.max_speed, other.max_speed)
             || f(self.init_variance, other.init_variance)
             || f(self.anchor_precision, other.anchor_precision)
-            || f(self.timescale, other.timescale)
+    }
+
+    /// Whether the timescale changed.
+    pub fn timescale_differs_from(&self, other: &Self) -> bool {
+        (self.timescale - other.timescale).abs() > 1e-6
+    }
+
+    /// Returns true if any field differs from `other` (float comparison uses small epsilon).
+    pub fn differs_from(&self, other: &Self) -> bool {
+        self.gbp_params_differ_from(other) || self.timescale_differs_from(other)
     }
 }
 
