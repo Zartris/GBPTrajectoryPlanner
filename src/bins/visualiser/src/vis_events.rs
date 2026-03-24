@@ -39,7 +39,7 @@
 //! | Message | Emitted when | Typical use |
 //! |---------|-------------|-------------|
 //! | [`ProximityAlert`] | Two robots closer than `d_safe` | Screenshot, pause, log |
-//! | [`SimTickEvent`] | Every frame (or every N frames) | Periodic monitoring |
+//! | [`DataReceived`] | New WS data processed (not every frame) | Periodic monitoring |
 //! | [`RobotStateChanged`] | Robot connects, disconnects, changes edge, etc. | State tracking |
 
 use bevy::prelude::*;
@@ -82,16 +82,17 @@ pub struct ProximityAlert {
     pub position_b: [f32; 3],
 }
 
-/// Emitted once per frame with aggregate simulation summary data.
+/// Emitted when new WebSocket data is processed (i.e., when `RobotStates`
+/// is mutated by `drain_ws_inbox`).
 ///
-/// Useful for addons that want periodic updates without polling individual
-/// robot states. The `tick` counter increments each frame the emission system
-/// runs.
+/// Unlike the old `SimTickEvent` which fired every frame, `DataReceived` only
+/// fires when there is actual new data. The `tick` counter increments each
+/// time the emission system runs.
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// fn on_tick(mut ticks: MessageReader<SimTickEvent>) {
+/// fn on_tick(mut ticks: MessageReader<DataReceived>) {
 ///     for tick in ticks.read() {
 ///         if tick.min_pair_distance < 0.5 {
 ///             tracing::warn!("global min distance very low: {:.2}m", tick.min_pair_distance);
@@ -102,7 +103,7 @@ pub struct ProximityAlert {
 // Fields are public API for addon consumers; not all are read internally.
 #[allow(dead_code)]
 #[derive(Message, Debug, Clone)]
-pub struct SimTickEvent {
+pub struct DataReceived {
     /// Monotonically increasing frame counter (starts at 0).
     pub tick: u64,
     /// Number of robots currently tracked by the visualiser.
@@ -200,7 +201,7 @@ mod tests {
 
     #[test]
     fn sim_tick_event_is_constructible() {
-        let tick = SimTickEvent {
+        let tick = DataReceived {
             tick: 42,
             robot_count: 4,
             total_ir_factors: 8,

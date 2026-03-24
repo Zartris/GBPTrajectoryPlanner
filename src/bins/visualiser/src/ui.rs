@@ -4,6 +4,7 @@ use tracing::info;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore};
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use crate::addon_config::AddonConfig;
 use crate::state::{DrawConfig, InspectorVisible, MetricsVisible, RobotStates, WsOutbox};
 
 /// Shared pause flag.
@@ -92,6 +93,7 @@ fn draw_hud(
     outbox: Res<WsOutbox>,
     mut draw: ResMut<DrawConfig>,
     mut gizmo_store: ResMut<GizmoConfigStore>,
+    mut addon_config: ResMut<AddonConfig>,
     _metrics_vis: Res<MetricsVisible>,
     _inspector_vis: Res<InspectorVisible>,
 ) -> Result {
@@ -210,6 +212,62 @@ fn draw_hud(
                         *draw = DrawConfig::default();
                     }
                 });
+            });
+
+        ui.add_space(4.0);
+
+        // ── Addon Toggles ──
+        egui::CollapsingHeader::new(egui::RichText::new("Addons").color(accent).strong().size(12.0))
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.add_space(4.0);
+
+                // Screenshot addon
+                section_heading(ui, "Screenshot", heading_color);
+                styled_toggle(ui, &mut addon_config.screenshot.enabled, "Screenshot");
+                if addon_config.screenshot.enabled {
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.label(egui::RichText::new("Delay (s)").color(dim).size(10.5));
+                        ui.add(egui::Slider::new(&mut addon_config.screenshot.delay_secs, 0.5..=30.0).max_decimals(1));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.label(egui::RichText::new("Path").color(dim).size(10.5));
+                        ui.text_edit_singleline(&mut addon_config.screenshot.output_path);
+                    });
+                    styled_toggle(ui, &mut addon_config.screenshot.quit_after, "  Quit after");
+                }
+
+                ui.add_space(6.0);
+
+                // Debug monitor addon
+                section_heading(ui, "Debug Monitor", heading_color);
+                styled_toggle(ui, &mut addon_config.debug_monitor.enabled, "Debug monitor");
+                if addon_config.debug_monitor.enabled {
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.label(egui::RichText::new("Interval (s)").color(dim).size(10.5));
+                        ui.add(egui::Slider::new(&mut addon_config.debug_monitor.interval_secs, 0.5..=30.0).max_decimals(1));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.label(egui::RichText::new("Proximity (m)").color(dim).size(10.5));
+                        ui.add(egui::Slider::new(&mut addon_config.debug_monitor.proximity_threshold, 0.1..=10.0).max_decimals(2));
+                    });
+                }
+
+                ui.add_space(6.0);
+
+                // Proximity screenshot addon
+                section_heading(ui, "Proximity Screenshot", heading_color);
+                styled_toggle(ui, &mut addon_config.proximity_screenshot.enabled, "Prox screenshot");
+
+                ui.add_space(6.0);
+
+                // State change logger addon
+                section_heading(ui, "State Change Logger", heading_color);
+                styled_toggle(ui, &mut addon_config.state_change_logger.enabled, "State logger");
             });
     });
 

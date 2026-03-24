@@ -4,12 +4,8 @@
 //!
 //! # Activation
 //!
-//! Disabled by default. Enable by setting the environment variable before
-//! launching the visualiser:
-//!
-//! ```bash
-//! VIS_LOG_STATE_CHANGES=1 cargo run -p visualiser
-//! ```
+//! Disabled by default. Enable via `[addons.state_change_logger]` in
+//! config.toml or toggle at runtime in the Addons UI panel.
 //!
 //! # How it works
 //!
@@ -26,32 +22,33 @@
 
 use bevy::prelude::*;
 use bevy::ecs::message::MessageReader;
+use crate::addon_config::AddonConfig;
 use crate::vis_api::VisApi;
 use crate::vis_events::{RobotChangeType, RobotStateChanged};
 
 /// Bevy plugin that logs robot state changes.
 ///
-/// Gated behind `VIS_LOG_STATE_CHANGES=1` environment variable.
+/// Gated by `[addons.state_change_logger].enabled` in config.toml.
 pub struct StateChangeLoggerAddon;
 
 impl Plugin for StateChangeLoggerAddon {
     fn build(&self, app: &mut App) {
-        let enabled = std::env::var("VIS_LOG_STATE_CHANGES")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-
-        if enabled {
-            tracing::info!("[state_change_logger] addon enabled");
-            app.add_systems(Update, state_change_logger_system);
-        }
+        app.add_systems(Update, state_change_logger_system);
     }
 }
 
 /// Reads [`RobotStateChanged`] messages and logs each one.
 fn state_change_logger_system(
     api: VisApi,
+    config: Res<AddonConfig>,
     mut changes: MessageReader<RobotStateChanged>,
 ) {
+    if !config.state_change_logger.enabled {
+        // Still drain changes to avoid message backup.
+        for _ in changes.read() {}
+        return;
+    }
+
     for change in changes.read() {
         let msg = match &change.event_type {
             RobotChangeType::Connected => {

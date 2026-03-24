@@ -2,16 +2,17 @@
 //
 // StartupScreenshotAddon — takes a screenshot N seconds after the app starts.
 //
-// Configuration via environment variables (set before launching the visualiser):
+// Configuration via `[addons.screenshot]` section in config.toml:
 //
-//   VIS_SCREENSHOT_DELAY   — seconds to wait before capturing (default: unset = disabled)
-//   VIS_SCREENSHOT_PATH    — output file path           (default: /tmp/vis-screenshot.png)
-//   VIS_SCREENSHOT_QUIT    — "1" or "true" → quit after the screenshot is written
+//   enabled     — true/false (default: false)
+//   delay_secs  — seconds to wait before capturing (default: 3.0)
+//   output_path — output file path (default: /tmp/vis-screenshot.png)
+//   quit_after  — quit the app after the screenshot is saved (default: false)
 //
-// Example usage:
-//   VIS_SCREENSHOT_DELAY=4 VIS_SCREENSHOT_PATH=/tmp/out.png cargo run -p visualiser
+// Settings can also be changed at runtime via the Addons UI panel.
 
 use bevy::prelude::*;
+use crate::addon_config::AddonConfig;
 use crate::vis_api::VisApi;
 
 /// Bevy plugin that optionally captures a screenshot after a configurable delay.
@@ -30,7 +31,7 @@ impl Plugin for StartupScreenshotAddon {
 // Internal resource — tracks one-frame-armed quit state machine
 // ---------------------------------------------------------------------------
 
-/// Tracks the two-phase screenshot → quit state machine.
+/// Tracks the two-phase screenshot -> quit state machine.
 ///
 /// After the screenshot is taken, quitting uses a two-frame delay:
 ///   Frame N:   `quit_pending` set by `screenshot_trigger`.
@@ -48,74 +49,31 @@ struct ScreenshotState {
 // Systems
 // ---------------------------------------------------------------------------
 
-/// Cached result of reading `VIS_SCREENSHOT_DELAY` from the environment.
-///
-/// - `None`           → not yet initialised (first frame).
-/// - `Some(None)`     → env var absent or unparseable; addon is disabled.
-/// - `Some(Some(v))`  → env var present and parsed to `v` seconds.
-type DelayCache = Option<Option<f32>>;
-
 /// Phase 1: waits for the configured delay, then fires the screenshot.
 fn screenshot_trigger(
     mut api: VisApi,
+    config: Res<AddonConfig>,
     mut state: ResMut<ScreenshotState>,
     mut done: Local<bool>,
-    mut delay_cache: Local<DelayCache>,
 ) {
-    if *done {
+    if *done || !config.screenshot.enabled {
         return;
     }
 
-    // Read delay from env once and cache; if the variable is absent the addon
-    // does nothing.  Using a Local avoids calling std::env::var every frame.
-    let delay: f32 = match *delay_cache {
-        // Already initialised — use cached value.
-        Some(Some(v)) => v,
-        Some(None) => return,
-        // First frame: read the env var and cache the result.
-        None => {
-            let cached = match std::env::var("VIS_SCREENSHOT_DELAY") {
-                Ok(s) => match s.parse::<f32>() {
-                    Ok(v) => Some(v),
-                    Err(_) => {
-                        tracing::warn!(
-                            "[startup_screenshot] VIS_SCREENSHOT_DELAY='{}' is not a valid number — addon disabled",
-                            s
-                        );
-                        None
-                    }
-                },
-                Err(_) => None,
-            };
-            *delay_cache = Some(cached);
-            match cached {
-                Some(v) => v,
-                None => return,
-            }
-        }
-    };
-
-    if api.elapsed_secs() < delay {
+    if api.elapsed_secs() < config.screenshot.delay_secs {
         return;
     }
 
     // Delay elapsed — take the screenshot exactly once.
     *done = true;
 
-    let path = std::env::var("VIS_SCREENSHOT_PATH")
-        .unwrap_or_else(|_| "/tmp/vis-screenshot.png".into());
-
-    api.screenshot(&path);
+    let path = &config.screenshot.output_path;
+    api.screenshot(path);
     api.log(&format!("startup screenshot -> {path}"));
 
-    // Check whether the caller wants the app to quit after the screenshot.
-    let should_quit = std::env::var("VIS_SCREENSHOT_QUIT")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
-    if should_quit {
-        api.log("VIS_SCREENSHOT_QUIT set — will quit after render flushes screenshot");
-        // Arm a two-frame delay (pending → armed → quit) so the render pipeline
+    if config.screenshot.quit_after {
+        api.log("quit_after set — will quit after render flushes screenshot");
+        // Arm a two-frame delay (pending -> armed -> quit) so the render pipeline
         // has two full frames to flush the screenshot entity before AppExit.
         state.quit_pending = true;
     }

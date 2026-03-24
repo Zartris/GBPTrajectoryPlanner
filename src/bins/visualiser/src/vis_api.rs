@@ -60,7 +60,7 @@
 //!
 //! - [`ProximityAlert`](crate::vis_events::ProximityAlert) — two robots closer
 //!   than d_safe
-//! - [`SimTickEvent`](crate::vis_events::SimTickEvent) — per-frame summary
+//! - [`DataReceived`](crate::vis_events::DataReceived) — per WS-batch summary
 //! - [`RobotStateChanged`](crate::vis_events::RobotStateChanged) — connect,
 //!   disconnect, edge change, factor count change, near-collision
 //!

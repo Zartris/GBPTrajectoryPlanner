@@ -32,17 +32,11 @@
 //!    app.add_plugins(my_addon::MyAddon);
 //!    ```
 //!
-//! 5. **(Optional) Gate behind an env var** for opt-in activation:
+//! 5. **Gate behind config** — addons check `Res<AddonConfig>` at runtime:
 //!    ```rust,ignore
-//!    impl Plugin for MyAddon {
-//!        fn build(&self, app: &mut App) {
-//!            let enabled = std::env::var("VIS_MY_ADDON")
-//!                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-//!                .unwrap_or(false);
-//!            if enabled {
-//!                app.add_systems(Update, my_system);
-//!            }
-//!        }
+//!    fn my_system(config: Res<AddonConfig>, mut api: VisApi) {
+//!        if !config.my_addon.enabled { return; }
+//!        api.log("hello from my addon!");
 //!    }
 //!    ```
 //!
@@ -56,13 +50,13 @@
 //! use bevy::prelude::*;
 //! use bevy::ecs::message::MessageReader;
 //! use crate::vis_api::VisApi;
-//! use crate::vis_events::{ProximityAlert, RobotStateChanged, SimTickEvent};
+//! use crate::vis_events::{ProximityAlert, RobotStateChanged, DataReceived};
 //!
 //! fn my_event_addon(
 //!     mut api: VisApi,
 //!     mut proximity: MessageReader<ProximityAlert>,
 //!     mut state_changes: MessageReader<RobotStateChanged>,
-//!     mut ticks: MessageReader<SimTickEvent>,
+//!     mut data: MessageReader<DataReceived>,
 //! ) {
 //!     for alert in proximity.read() {
 //!         api.log(&format!("robots {} & {} too close!", alert.robot_a, alert.robot_b));
@@ -70,22 +64,28 @@
 //!     for change in state_changes.read() {
 //!         api.log(&format!("robot {} changed: {:?}", change.robot_id, change.event_type));
 //!     }
-//!     for tick in ticks.read() {
-//!         if tick.tick % 60 == 0 {
-//!             api.log(&format!("tick {} — {} robots", tick.tick, tick.robot_count));
+//!     for batch in data.read() {
+//!         if batch.tick % 60 == 0 {
+//!             api.log(&format!("tick {} — {} robots", batch.tick, batch.robot_count));
 //!         }
 //!     }
 //! }
 //! ```
 //!
+//! # Configuration
+//!
+//! All addon settings live in `[addons]` section of config.toml and are
+//! exposed as runtime-changeable controls in the Control panel's Addons
+//! section. See [`AddonConfig`](crate::addon_config::AddonConfig).
+//!
 //! # Built-in addons
 //!
-//! | Addon | Env var | Description |
-//! |-------|---------|-------------|
-//! | [`StartupScreenshotAddon`] | `VIS_SCREENSHOT_DELAY` | Screenshot after N seconds |
-//! | [`DebugMonitorAddon`] | `VIS_DEBUG_INTERVAL` | Periodic robot state logging |
-//! | [`ProximityScreenshotAddon`] | `VIS_PROXIMITY_SCREENSHOT=1` | Screenshot on proximity alert |
-//! | [`StateChangeLoggerAddon`] | `VIS_LOG_STATE_CHANGES=1` | Log all robot state changes |
+//! | Addon | Config section | Description |
+//! |-------|---------------|-------------|
+//! | [`StartupScreenshotAddon`] | `[addons.screenshot]` | Screenshot after N seconds |
+//! | [`DebugMonitorAddon`] | `[addons.debug_monitor]` | Periodic robot state logging |
+//! | [`ProximityScreenshotAddon`] | `[addons.proximity_screenshot]` | Screenshot on proximity alert |
+//! | [`StateChangeLoggerAddon`] | `[addons.state_change_logger]` | Log all robot state changes |
 
 mod startup_screenshot;
 mod debug_monitor;
@@ -100,6 +100,10 @@ use crate::vis_event_systems::VisEventPlugin;
 ///
 /// The event system ([`VisEventPlugin`]) must be registered before any addon
 /// that reads event messages. This plugin handles the ordering automatically.
+///
+/// All addons are registered unconditionally. Each addon checks
+/// `Res<AddonConfig>` at runtime to decide whether to run, which allows
+/// addons to be toggled on/off via the UI without restarting the app.
 pub struct AddonPlugins;
 
 impl Plugin for AddonPlugins {
@@ -108,20 +112,12 @@ impl Plugin for AddonPlugins {
         // addon systems try to use MessageReader<T>.
         app.add_plugins(VisEventPlugin);
 
-        // Built-in addons — screenshot addon is always available (no-ops without env vars).
+        // All built-in addons — registered unconditionally.
+        // Each addon checks config.enabled internally and returns immediately
+        // when disabled. This allows runtime toggling via the Addons UI panel.
         app.add_plugins(startup_screenshot::StartupScreenshotAddon);
-
-        // Debug/diagnostic addons — only active when their env var is set.
-        // These addons check their env var internally and no-op if not configured,
-        // but we gate registration too to avoid unnecessary system overhead.
-        if std::env::var("VIS_DEBUG_INTERVAL").is_ok() || std::env::var("VIS_DEBUG_PROXIMITY").is_ok() {
-            app.add_plugins(debug_monitor::DebugMonitorAddon);
-        }
-        if std::env::var("VIS_PROXIMITY_SCREENSHOT").is_ok() {
-            app.add_plugins(proximity_screenshot::ProximityScreenshotAddon);
-        }
-        if std::env::var("VIS_LOG_STATE_CHANGES").is_ok() {
-            app.add_plugins(state_change_logger::StateChangeLoggerAddon);
-        }
+        app.add_plugins(debug_monitor::DebugMonitorAddon);
+        app.add_plugins(proximity_screenshot::ProximityScreenshotAddon);
+        app.add_plugins(state_change_logger::StateChangeLoggerAddon);
     }
 }

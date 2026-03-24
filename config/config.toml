@@ -187,3 +187,28 @@ robots = true
 planned_paths = true
 belief_tubes = true
 factor_links = true
+
+# ─── Addon Configuration ────────────────────────────────────────────────────
+# Toggle and configure visualiser addons. All addons default to disabled.
+# Settings can also be changed at runtime via the Addons panel in the UI.
+
+# Startup screenshot — captures a PNG after a delay
+[addons.screenshot]
+enabled = false
+delay_secs = 3.0
+output_path = "/tmp/vis-screenshot.png"
+quit_after = false
+
+# Debug monitor — logs robot state periodically
+[addons.debug_monitor]
+enabled = false
+interval_secs = 2.0
+proximity_threshold = 1.5
+
+# Proximity screenshot — captures PNG on proximity alert
+[addons.proximity_screenshot]
+enabled = false
+
+# State change logger — logs robot state transitions
+[addons.state_change_logger]
+enabled = false

@@ -7,6 +7,7 @@ mod ui;
 mod vis_api;
 mod vis_events;
 mod vis_event_systems;
+mod addon_config;
 mod addons;
 
 use std::collections::VecDeque;
@@ -22,15 +23,18 @@ use map_scene::MapScenePlugin;
 use camera::CameraPlugin;
 use robot_render::RobotRenderPlugin;
 use ui::UiPlugin;
+use addon_config::AddonConfig;
 use tracing_subscriber::EnvFilter;
 
-/// TOML structure for the [visualisation.draw] section plus [gbp.interrobot].
+/// TOML structure for the [visualisation.draw] section plus [gbp.interrobot] and [addons].
 #[derive(Deserialize, Default)]
 struct VisConfig {
     #[serde(default)]
     visualisation: VisSection,
     #[serde(default)]
     gbp: GbpSection,
+    #[serde(default)]
+    addons: AddonConfig,
 }
 
 #[derive(Deserialize, Default)]
@@ -114,16 +118,16 @@ fn main() {
     // Load draw config from the same config.toml the simulator uses
     let config_path = std::env::var("CONFIG_PATH")
         .unwrap_or_else(|_| "config/config.toml".to_string());
-    let draw_config = if let Ok(toml_str) = std::fs::read_to_string(&config_path) {
+    let (draw_config, addon_config) = if let Ok(toml_str) = std::fs::read_to_string(&config_path) {
         let vc: VisConfig = toml::from_str(&toml_str).unwrap_or_default();
         let mut dc = DrawConfig::from(vc.visualisation.draw);
         // Propagate [gbp.interrobot] d_safe so the IR color gradient uses the real value
         if let Some(d) = vc.gbp.interrobot.d_safe {
             dc.ir_d_safe = d.max(1e-3);
         }
-        dc
+        (dc, vc.addons)
     } else {
-        DrawConfig::default()
+        (DrawConfig::default(), AddonConfig::default())
     };
 
     // Load map (default path or from env)
@@ -178,6 +182,7 @@ fn main() {
         .insert_resource(bevy::transform::StaticTransformOptimizations::enabled())
         .insert_resource(MapRes(map))
         .insert_resource(draw_config)
+        .insert_resource(addon_config)
         .insert_resource(RobotStates::default())
         .insert_resource(WsInbox(inbox))
         .insert_resource(WsOutbox(outbox))

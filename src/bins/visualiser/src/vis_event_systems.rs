@@ -2,31 +2,28 @@
 //
 //! Event emission systems for the visualiser event bus.
 //!
-//! These systems run every frame and emit [`Message`] types defined in
-//! [`vis_events`](crate::vis_events). Addons subscribe to them via
-//! [`MessageReader<T>`].
+//! These systems run **only when `RobotStates` has changed** (i.e., when
+//! `drain_ws_inbox` processed new WebSocket data). This eliminates per-frame
+//! overhead on idle frames.
 //!
 //! # Architecture
 //!
 //! ```text
-//!  RobotStates (Res)
-//!        |
+//!  drain_ws_inbox (robot_render.rs)
+//!        |  mutates RobotStates
 //!        v
-//!  ┌─────────────────────┐    MessageWriter<ProximityAlert>
-//!  │ proximity_emitter    │───────────────────────────────────► addons
-//!  └─────────────────────┘
-//!        |
-//!  ┌─────────────────────┐    MessageWriter<SimTickEvent>
-//!  │ sim_tick_emitter     │───────────────────────────────────► addons
-//!  └─────────────────────┘
-//!        |
-//!  ┌─────────────────────┐    MessageWriter<RobotStateChanged>
-//!  │ state_change_emitter │───────────────────────────────────► addons
-//!  └─────────────────────┘
+//!  ┌───────────────────────────┐    resource_changed::<RobotStates>
+//!  │ emit_events_on_data       │    (run condition)
+//!  │  ├─ proximity check       │──► MessageWriter<ProximityAlert>
+//!  │  ├─ state change detect   │──► MessageWriter<RobotStateChanged>
+//!  │  └─ data summary          │──► MessageWriter<DataReceived>
+//!  └───────────────────────────┘
 //! ```
 //!
-//! All emission systems run in the [`Update`] schedule. They are registered
-//! by [`VisEventPlugin`].
+//! The single `emit_events_on_data` system replaces three per-frame systems
+//! (`proximity_emitter`, `sim_tick_emitter`, `state_change_emitter`).
+//! It is registered by [`VisEventPlugin`] and runs in [`Update`] with a
+//! `resource_changed::<RobotStates>` run condition.
 
 use bevy::prelude::*;
 use bevy::ecs::message::MessageWriter;
@@ -34,7 +31,7 @@ use std::collections::HashMap;
 
 use crate::state::{DrawConfig, RobotStates};
 use crate::vis_events::{
-    ProximityAlert, RobotChangeType, RobotStateChanged, SimTickEvent,
+    DataReceived, ProximityAlert, RobotChangeType, RobotStateChanged,
 };
 use gbp_map::map::EdgeId;
 
@@ -42,7 +39,7 @@ use gbp_map::map::EdgeId;
 // Plugin
 // ---------------------------------------------------------------------------
 
-/// Registers all event message types and their emission systems.
+/// Registers all event message types and the change-triggered emission system.
 ///
 /// Add this plugin to the Bevy [`App`] to enable the event bus. It is
 /// automatically added by [`AddonPlugins`](crate::addons::AddonPlugins).
@@ -52,22 +49,19 @@ impl Plugin for VisEventPlugin {
     fn build(&self, app: &mut App) {
         // Register message types so MessageReader/MessageWriter work.
         app.add_message::<ProximityAlert>()
-            .add_message::<SimTickEvent>()
+            .add_message::<DataReceived>()
             .add_message::<RobotStateChanged>()
-            // Emission systems — run every frame in Update.
+            // Single emission system — runs only when RobotStates was mutated.
             .add_systems(
                 Update,
-                (
-                    proximity_emitter,
-                    sim_tick_emitter,
-                    state_change_emitter,
-                ),
+                emit_events_on_data
+                    .run_if(resource_changed::<RobotStates>),
             );
     }
 }
 
 // ---------------------------------------------------------------------------
-// Proximity Alert Emitter
+// Combined Event Emission System
 // ---------------------------------------------------------------------------
 
 /// Rate-limit state: maps `(min_id, max_id)` to the last time (elapsed_secs)
@@ -81,15 +75,34 @@ struct ProximityRateLimiter {
 /// robot pair. Prevents log/screenshot spam when two robots are stuck close.
 const PROXIMITY_COOLDOWN_SECS: f32 = 1.0;
 
-/// Checks all robot pairs each frame. Emits [`ProximityAlert`] when 3D
-/// distance < `DrawConfig::ir_d_safe`, rate-limited to once per second per
-/// pair.
-fn proximity_emitter(
+/// Snapshot of per-robot state from the previous check, used to detect changes.
+#[derive(Clone, Debug)]
+struct RobotSnapshot {
+    current_edge: EdgeId,
+    active_factor_count: usize,
+    was_near_collision: bool,
+}
+
+/// Previous robot state for change detection.
+#[derive(Default)]
+struct PreviousRobotStates {
+    snapshots: HashMap<u32, RobotSnapshot>,
+}
+
+/// Unified event emission system. Runs only when `RobotStates` changed.
+///
+/// Combines proximity checking, state change detection, and data summary
+/// into a single system to avoid iterating over robot states multiple times.
+fn emit_events_on_data(
     robot_states: Res<RobotStates>,
     draw: Res<DrawConfig>,
     time: Res<Time>,
-    mut writer: MessageWriter<ProximityAlert>,
+    mut proximity_writer: MessageWriter<ProximityAlert>,
+    mut data_writer: MessageWriter<DataReceived>,
+    mut state_writer: MessageWriter<RobotStateChanged>,
     mut limiter: Local<ProximityRateLimiter>,
+    mut prev: Local<PreviousRobotStates>,
+    mut tick_counter: Local<u64>,
 ) {
     let now = time.elapsed_secs();
     let d_safe = draw.ir_d_safe;
@@ -98,6 +111,7 @@ fn proximity_emitter(
     let mut ids: Vec<u32> = robot_states.0.keys().copied().collect();
     ids.sort_unstable();
 
+    // ── 1. Proximity alerts ──────────────────────────────────────────────
     for i in 0..ids.len() {
         let id_a = ids[i];
         let Some(state_a) = robot_states.0.get(&id_a) else {
@@ -124,7 +138,7 @@ fn proximity_emitter(
 
                 limiter.last_alert.insert(pair_key, now);
 
-                writer.write(ProximityAlert {
+                proximity_writer.write(ProximityAlert {
                     robot_a: id_a,
                     robot_b: id_b,
                     distance: dist,
@@ -136,77 +150,14 @@ fn proximity_emitter(
         }
     }
 
-    // Prune stale entries from the rate-limiter (pairs that haven't triggered
-    // in a while) to prevent unbounded memory growth.
+    // Prune stale entries from the rate-limiter to prevent unbounded memory growth.
     if limiter.last_alert.len() > 64 {
         limiter
             .last_alert
             .retain(|_, last| now - *last < PROXIMITY_COOLDOWN_SECS * 10.0);
     }
-}
 
-// ---------------------------------------------------------------------------
-// Sim Tick Emitter
-// ---------------------------------------------------------------------------
-
-/// Emits a [`SimTickEvent`] every frame with aggregate robot data.
-fn sim_tick_emitter(
-    robot_states: Res<RobotStates>,
-    mut writer: MessageWriter<SimTickEvent>,
-    mut tick_counter: Local<u64>,
-) {
-    let robot_count = robot_states.0.len();
-    let total_ir_factors: usize = robot_states
-        .0
-        .values()
-        .map(|s| s.active_factor_count)
-        .sum();
-
-    // Use pre-computed min_neighbour_dist_3d from RobotState (avoids duplicate O(n²)).
-    let min_pair_distance = robot_states
-        .0
-        .values()
-        .map(|s| s.min_neighbour_dist_3d)
-        .fold(f32::MAX, f32::min);
-
-    writer.write(SimTickEvent {
-        tick: *tick_counter,
-        robot_count,
-        total_ir_factors,
-        min_pair_distance,
-    });
-
-    *tick_counter += 1;
-}
-
-// ---------------------------------------------------------------------------
-// Robot State Change Emitter
-// ---------------------------------------------------------------------------
-
-/// Snapshot of per-robot state from the previous frame, used to detect changes.
-#[derive(Clone, Debug)]
-struct RobotSnapshot {
-    current_edge: EdgeId,
-    active_factor_count: usize,
-    was_near_collision: bool,
-}
-
-/// Previous-frame robot state for change detection.
-#[derive(Default)]
-struct PreviousRobotStates {
-    snapshots: HashMap<u32, RobotSnapshot>,
-}
-
-/// Compares current [`RobotStates`] against a previous-frame snapshot and
-/// emits [`RobotStateChanged`] messages for any detected differences.
-fn state_change_emitter(
-    robot_states: Res<RobotStates>,
-    draw: Res<DrawConfig>,
-    mut writer: MessageWriter<RobotStateChanged>,
-    mut prev: Local<PreviousRobotStates>,
-) {
-    let d_safe = draw.ir_d_safe;
-
+    // ── 2. State change detection ────────────────────────────────────────
     // Detect new robots (Connected) and state changes.
     for (&id, state) in &robot_states.0 {
         let is_near = state.min_neighbour_dist_3d < d_safe;
@@ -214,7 +165,7 @@ fn state_change_emitter(
         if let Some(old) = prev.snapshots.get(&id) {
             // Edge changed?
             if state.current_edge != old.current_edge {
-                writer.write(RobotStateChanged {
+                state_writer.write(RobotStateChanged {
                     robot_id: id,
                     event_type: RobotChangeType::EdgeChanged {
                         from: old.current_edge,
@@ -225,7 +176,7 @@ fn state_change_emitter(
 
             // Factor count changed?
             if state.active_factor_count != old.active_factor_count {
-                writer.write(RobotStateChanged {
+                state_writer.write(RobotStateChanged {
                     robot_id: id,
                     event_type: RobotChangeType::FactorCountChanged {
                         from: old.active_factor_count,
@@ -236,7 +187,7 @@ fn state_change_emitter(
 
             // Crossed into near-collision zone (rising edge only)?
             if is_near && !old.was_near_collision {
-                writer.write(RobotStateChanged {
+                state_writer.write(RobotStateChanged {
                     robot_id: id,
                     event_type: RobotChangeType::NearCollision {
                         distance: state.min_neighbour_dist_3d,
@@ -245,7 +196,7 @@ fn state_change_emitter(
             }
         } else {
             // New robot — emit Connected.
-            writer.write(RobotStateChanged {
+            state_writer.write(RobotStateChanged {
                 robot_id: id,
                 event_type: RobotChangeType::Connected,
             });
@@ -255,14 +206,14 @@ fn state_change_emitter(
     // Detect disconnected robots (present in prev but not in current).
     for &id in prev.snapshots.keys() {
         if !robot_states.0.contains_key(&id) {
-            writer.write(RobotStateChanged {
+            state_writer.write(RobotStateChanged {
                 robot_id: id,
                 event_type: RobotChangeType::Disconnected,
             });
         }
     }
 
-    // Update snapshot for next frame.
+    // Update snapshot for next check.
     prev.snapshots.clear();
     for (&id, state) in &robot_states.0 {
         prev.snapshots.insert(
@@ -274,6 +225,29 @@ fn state_change_emitter(
             },
         );
     }
+
+    // ── 3. DataReceived summary ──────────────────────────────────────────
+    let robot_count = robot_states.0.len();
+    let total_ir_factors: usize = robot_states
+        .0
+        .values()
+        .map(|s| s.active_factor_count)
+        .sum();
+
+    let min_pair_distance = robot_states
+        .0
+        .values()
+        .map(|s| s.min_neighbour_dist_3d)
+        .fold(f32::MAX, f32::min);
+
+    data_writer.write(DataReceived {
+        tick: *tick_counter,
+        robot_count,
+        total_ir_factors,
+        min_pair_distance,
+    });
+
+    *tick_counter += 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +264,7 @@ pub(crate) fn dist_3d(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 /// Compute the minimum pairwise 3D distance across all tracked robots.
 /// Returns `f32::MAX` if fewer than 2 robots are tracked.
+#[cfg(test)]
 fn compute_min_pair_distance(robot_states: &RobotStates) -> f32 {
     let positions: Vec<(u32, [f32; 3])> = robot_states
         .0

@@ -3,16 +3,16 @@
 // DebugMonitorAddon — periodically logs robot positions, velocities, and
 // proximity warnings to the tracing output.
 //
-// Configuration via environment variables (set before launching the visualiser):
+// Configuration via `[addons.debug_monitor]` section in config.toml:
 //
-//   VIS_DEBUG_INTERVAL   — seconds between log dumps (default: 2.0)
-//   VIS_DEBUG_PROXIMITY  — distance threshold (m) that triggers a proximity
-//                          warning in the log (default: 1.5)
+//   enabled             — true/false (default: false)
+//   interval_secs       — seconds between log dumps (default: 2.0)
+//   proximity_threshold — distance (m) for proximity warnings (default: 1.5)
 //
-// Example usage:
-//   VIS_DEBUG_INTERVAL=1.0 VIS_DEBUG_PROXIMITY=2.0 cargo run -p visualiser
+// Settings can also be changed at runtime via the Addons UI panel.
 
 use bevy::prelude::*;
+use crate::addon_config::AddonConfig;
 use crate::vis_api::VisApi;
 
 /// Bevy plugin that logs robot state at a configurable interval and emits
@@ -21,38 +21,7 @@ pub struct DebugMonitorAddon;
 
 impl Plugin for DebugMonitorAddon {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DebugMonitorConfig>()
-            .add_systems(Update, debug_monitor_system);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Config resource
-// ---------------------------------------------------------------------------
-
-/// Runtime configuration for the debug monitor.
-///
-/// Values are read once from environment variables on first use and then
-/// cached here.  Changing the env vars after the app starts has no effect.
-#[derive(Resource)]
-pub struct DebugMonitorConfig {
-    /// Seconds between periodic log dumps.
-    pub interval_secs: f32,
-    /// 3-D distance (m) below which a proximity warning is emitted.
-    pub proximity_threshold: f32,
-}
-
-impl Default for DebugMonitorConfig {
-    fn default() -> Self {
-        let interval_secs = std::env::var("VIS_DEBUG_INTERVAL")
-            .ok()
-            .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(2.0);
-        let proximity_threshold = std::env::var("VIS_DEBUG_PROXIMITY")
-            .ok()
-            .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(1.5);
-        Self { interval_secs, proximity_threshold }
+        app.add_systems(Update, debug_monitor_system);
     }
 }
 
@@ -62,14 +31,20 @@ impl Default for DebugMonitorConfig {
 
 fn debug_monitor_system(
     api: VisApi,
-    cfg: Res<DebugMonitorConfig>,
+    config: Res<AddonConfig>,
     mut last_log: Local<f32>,
     mut proximity_alerts: MessageReader<crate::vis_events::ProximityAlert>,
 ) {
+    if !config.debug_monitor.enabled {
+        // Still drain alerts to avoid message backup.
+        for _ in proximity_alerts.read() {}
+        return;
+    }
+
     let now = api.elapsed_secs();
 
     // Periodic state dump.
-    if now - *last_log >= cfg.interval_secs {
+    if now - *last_log >= config.debug_monitor.interval_secs {
         *last_log = now;
         let ids = api.robot_ids();
         if ids.is_empty() {
@@ -110,16 +85,13 @@ fn debug_monitor_system(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::addon_config::DebugMonitorConfig;
 
     #[test]
-    fn default_config_uses_env_fallbacks() {
-        // Env vars not set in this test — should use built-in defaults.
-        // We unset just in case a test runner happens to have them set.
-        std::env::remove_var("VIS_DEBUG_INTERVAL");
-        std::env::remove_var("VIS_DEBUG_PROXIMITY");
+    fn default_config_values() {
         let cfg = DebugMonitorConfig::default();
         assert!((cfg.interval_secs - 2.0).abs() < 1e-6);
         assert!((cfg.proximity_threshold - 1.5).abs() < 1e-6);
+        assert!(!cfg.enabled);
     }
 }

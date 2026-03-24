@@ -5,12 +5,8 @@
 //!
 //! # Activation
 //!
-//! Disabled by default. Enable by setting the environment variable before
-//! launching the visualiser:
-//!
-//! ```bash
-//! VIS_PROXIMITY_SCREENSHOT=1 cargo run -p visualiser
-//! ```
+//! Disabled by default. Enable via `[addons.proximity_screenshot]` in
+//! config.toml or toggle at runtime in the Addons UI panel.
 //!
 //! Screenshots are saved to `/tmp/proximity_{robot_a}_{robot_b}_{tick}.png`.
 //!
@@ -28,33 +24,34 @@
 
 use bevy::prelude::*;
 use bevy::ecs::message::MessageReader;
+use crate::addon_config::AddonConfig;
 use crate::vis_api::VisApi;
 use crate::vis_events::ProximityAlert;
 
 /// Bevy plugin that screenshots on proximity alerts.
 ///
-/// Gated behind `VIS_PROXIMITY_SCREENSHOT=1` environment variable.
+/// Gated by `[addons.proximity_screenshot].enabled` in config.toml.
 pub struct ProximityScreenshotAddon;
 
 impl Plugin for ProximityScreenshotAddon {
     fn build(&self, app: &mut App) {
-        let enabled = std::env::var("VIS_PROXIMITY_SCREENSHOT")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-
-        if enabled {
-            tracing::info!("[proximity_screenshot] addon enabled");
-            app.add_systems(Update, proximity_screenshot_system);
-        }
+        app.add_systems(Update, proximity_screenshot_system);
     }
 }
 
 /// Reads [`ProximityAlert`] messages and takes screenshots.
 fn proximity_screenshot_system(
     mut api: VisApi,
+    config: Res<AddonConfig>,
     mut alerts: MessageReader<ProximityAlert>,
     mut shot_count: Local<u64>,
 ) {
+    if !config.proximity_screenshot.enabled {
+        // Still drain alerts to avoid message backup.
+        for _ in alerts.read() {}
+        return;
+    }
+
     for alert in alerts.read() {
         let idx = *shot_count;
         *shot_count += 1;
