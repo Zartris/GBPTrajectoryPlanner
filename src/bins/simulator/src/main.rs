@@ -227,6 +227,7 @@ async fn main() {
     // ── N-robot collision monitor (10 Hz, pairwise 3D distance) ──
     let map_mon = Arc::clone(&map_arc);
     let d_safe = config.d_safe;
+    let tx_json_collision = tx_json.clone();
     tokio::spawn(async move {
         const CHASSIS_LEN: f32 = 1.15;
         let n = all_physics.len();
@@ -264,6 +265,17 @@ async fn main() {
                             i, si, vi, pi[0], pi[1], pi[2],
                             j, sj, vj, pj[0], pj[1], pj[2],
                         );
+                        // Midpoint in map coordinates — visualiser converts to Bevy coords.
+                        let mid = [
+                            (pi[0] + pj[0]) * 0.5,
+                            (pi[1] + pj[1]) * 0.5,
+                            (pi[2] + pj[2]) * 0.5,
+                        ];
+                        let json = format!(
+                            r#"{{"type":"collision","robot_a":{},"robot_b":{},"pos":[{},{},{}],"dist":{}}}"#,
+                            i, j, mid[0], mid[1], mid[2], dist
+                        );
+                        let _ = tx_json_collision.send(json);
                     }
                 }
             }

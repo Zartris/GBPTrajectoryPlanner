@@ -2,7 +2,7 @@
 use bevy::prelude::*;
 use gbp_map::map::{Map, EdgeId};
 use gbp_map::MAX_HORIZON;
-use crate::state::{DrawConfig, MapRes, RobotStates, TraceHistory, WsInbox};
+use crate::state::{CollisionInbox, DrawConfig, MapRes, RobotStates, TraceHistory, WsInbox};
 use crate::ui::SimPaused;
 use tracing::warn;
 
@@ -14,8 +14,17 @@ impl Plugin for RobotRenderPlugin {
            .add_systems(Update, (drain_ws_inbox, spawn_new_robot_meshes, update_robot_transforms, draw_planned_path, draw_belief_tubes, draw_uncertainty_bars, draw_factor_links).chain())
            .add_systems(Update, (sample_trace, draw_traces).chain())
            .add_systems(Update, sync_robot_visibility)
-           .add_systems(Update, draw_robot_colliders);
+           .add_systems(Update, draw_robot_colliders)
+           .add_systems(Update, spawn_collision_markers)
+           .add_systems(Update, fade_collision_markers);
     }
+}
+
+/// Marker component for collision flash entities.
+/// `alpha` starts at 1.0 and decreases each frame until the entity is despawned.
+#[derive(Component)]
+pub struct CollisionMarker {
+    pub alpha: f32,
 }
 
 /// Marker component for the robot arrow entity.
@@ -459,6 +468,57 @@ fn sync_robot_visibility(
     let vis = if draw.robots { Visibility::Visible } else { Visibility::Hidden };
     for mut v in &mut robots {
         *v = vis;
+    }
+}
+
+/// Drain CollisionInbox and spawn a translucent red sphere at each collision midpoint.
+/// Gated behind `draw.collision_markers` — skipped when the toggle is off.
+fn spawn_collision_markers(
+    inbox: Res<CollisionInbox>,
+    draw: Res<DrawConfig>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // Always drain the inbox so events don't accumulate when the toggle is off.
+    let events: std::vec::Vec<_> = {
+        let mut q = inbox.0.lock().unwrap_or_else(|e| e.into_inner());
+        q.drain(..).collect()
+    };
+    if !draw.collision_markers { return; }
+    for ev in events {
+        // pos is in map coords [x, y, z]; convert to Bevy coords: [map_x, map_z, -map_y]
+        let bevy_pos = Vec3::new(ev.pos[0], ev.pos[2], -ev.pos[1]);
+        commands.spawn((
+            Mesh3d(meshes.add(Sphere::new(0.3).mesh().build())),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgba(1.0, 0.1, 0.1, 1.0),
+                alpha_mode: AlphaMode::Blend,
+                ..default()
+            })),
+            Transform::from_translation(bevy_pos + Vec3::Y * 0.3),
+            CollisionMarker { alpha: 1.0 },
+        ));
+    }
+}
+
+/// Decrease each `CollisionMarker`'s alpha each frame and despawn when fully transparent.
+/// Always runs regardless of `draw.collision_markers` so existing markers finish fading.
+fn fade_collision_markers(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut CollisionMarker, &MeshMaterial3d<StandardMaterial>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    time: Res<Time>,
+) {
+    // Fade to zero over ~3 seconds.
+    let fade_rate = time.delta_secs() / 3.0;
+    for (entity, mut marker, mat_handle) in query.iter_mut() {
+        marker.alpha = (marker.alpha - fade_rate).max(0.0);
+        if marker.alpha < 0.01 {
+            commands.entity(entity).despawn();
+        } else if let Some(mat) = materials.get_mut(mat_handle) {
+            mat.base_color = Color::srgba(1.0, 0.1, 0.1, marker.alpha);
+        }
     }
 }
 
