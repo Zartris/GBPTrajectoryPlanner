@@ -18,7 +18,7 @@ use bevy::render::renderer::RenderAdapterInfo;
 use bevy_egui::EguiPlugin;
 // bevy_inspector_egui — used via DefaultInspectorConfigPlugin + manual ui_for_world
 use serde::Deserialize;
-use state::{DrawConfig, InspectorVisible, MapRes, RobotStates, WsInbox, WsOutbox};
+use state::{CollisionInbox, DrawConfig, InspectInbox, InspectorVisible, MapRes, RobotStates, WsInbox, WsOutbox};
 use map_scene::MapScenePlugin;
 use camera::CameraPlugin;
 use robot_render::RobotRenderPlugin;
@@ -143,7 +143,15 @@ fn main() {
         .unwrap_or_else(|_| "ws://localhost:3000/ws".to_string());
     let inbox: Arc<Mutex<VecDeque<_>>> = Arc::new(Mutex::new(VecDeque::new()));
     let outbox: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
-    let ws_shutdown = ws_client::spawn_ws_client(ws_url, Arc::clone(&inbox), Arc::clone(&outbox));
+    let collision_inbox: Arc<Mutex<VecDeque<_>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let inspect_inbox: Arc<Mutex<VecDeque<_>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let ws_shutdown = ws_client::spawn_ws_client(
+        ws_url,
+        Arc::clone(&inbox),
+        Arc::clone(&outbox),
+        Arc::clone(&collision_inbox),
+        Arc::clone(&inspect_inbox),
+    );
 
     App::new()
         // Cap frame rate: ~60 FPS when focused, ~10 FPS when unfocused.
@@ -186,6 +194,8 @@ fn main() {
         .insert_resource(RobotStates::default())
         .insert_resource(WsInbox(inbox))
         .insert_resource(WsOutbox(outbox))
+        .insert_resource(CollisionInbox(collision_inbox))
+        .insert_resource(InspectInbox(inspect_inbox))
         .add_systems(Startup, log_gpu_info)
         .add_plugins(MapScenePlugin)
         .add_plugins(CameraPlugin)

@@ -125,9 +125,17 @@ async fn main() {
         loop {
             match rx_state.recv().await {
                 Ok(msg) => {
-                    match serde_json::to_string(&msg) {
-                        Ok(json) => { let _ = tx_json_relay.send(json); }
-                        Err(e) => tracing::error!("relay: JSON serialize failed: {}", e),
+                    match serde_json::to_value(&msg) {
+                        Ok(mut val) => {
+                            if let Some(obj) = val.as_object_mut() {
+                                obj.insert("type".to_string(), serde_json::Value::String("state".to_string()));
+                            }
+                            match serde_json::to_string(&val) {
+                                Ok(json) => { let _ = tx_json_relay.send(json); }
+                                Err(e) => tracing::error!("relay: JSON serialize failed: {}", e),
+                            }
+                        }
+                        Err(e) => tracing::error!("relay: JSON value failed: {}", e),
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {

@@ -1,8 +1,9 @@
 //! Spawns a background tokio thread that connects to the simulator WebSocket
 //! and writes received RobotStateMsg values into WsInbox.
 //! M2: Added Arc<AtomicBool> shutdown flag, checked in reconnect loop.
+//! M6b: Added type-discriminated message dispatch for collision and inspect_response.
 
-use crate::state::WS_INBOX_CAP;
+use crate::state::{CollisionEvent, InspectResponse, WS_INBOX_CAP};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
@@ -18,6 +19,8 @@ pub fn spawn_ws_client(
     url: String,
     inbox: Arc<Mutex<VecDeque<RobotStateMsg>>>,
     outbox: Arc<Mutex<VecDeque<String>>>,
+    collision_inbox: Arc<Mutex<VecDeque<CollisionEvent>>>,
+    inspect_inbox: Arc<Mutex<VecDeque<InspectResponse>>>,
 ) -> Arc<AtomicBool> {
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = Arc::clone(&shutdown);
@@ -57,13 +60,46 @@ pub fn spawn_ws_client(
                                 stream.next(),
                             ).await {
                                 Ok(Some(Ok(Message::Text(json)))) => {
-                                    match serde_json::from_str::<RobotStateMsg>(&json) {
-                                        Ok(state) => {
-                                            let mut q = inbox.lock().unwrap_or_else(|e| e.into_inner());
-                                            if q.len() >= WS_INBOX_CAP { q.pop_front(); }
-                                            q.push_back(state);
+                                    match serde_json::from_str::<serde_json::Value>(&json) {
+                                        Ok(val) => {
+                                            let msg_type = val.get("type")
+                                                .and_then(|t| t.as_str())
+                                                .unwrap_or("state");
+                                            match msg_type {
+                                                "state" => {
+                                                    match serde_json::from_value::<RobotStateMsg>(val) {
+                                                        Ok(state) => {
+                                                            let mut q = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                                                            if q.len() >= WS_INBOX_CAP { q.pop_front(); }
+                                                            q.push_back(state);
+                                                        }
+                                                        Err(e) => warn!("bad state msg: {}", e),
+                                                    }
+                                                }
+                                                "collision" => {
+                                                    match serde_json::from_value::<CollisionEvent>(val) {
+                                                        Ok(ev) => {
+                                                            let mut q = collision_inbox.lock().unwrap_or_else(|e| e.into_inner());
+                                                            if q.len() >= WS_INBOX_CAP { q.pop_front(); }
+                                                            q.push_back(ev);
+                                                        }
+                                                        Err(e) => warn!("bad collision msg: {}", e),
+                                                    }
+                                                }
+                                                "inspect_response" => {
+                                                    match serde_json::from_value::<InspectResponse>(val) {
+                                                        Ok(resp) => {
+                                                            let mut q = inspect_inbox.lock().unwrap_or_else(|e| e.into_inner());
+                                                            if q.len() >= WS_INBOX_CAP { q.pop_front(); }
+                                                            q.push_back(resp);
+                                                        }
+                                                        Err(e) => warn!("bad inspect_response msg: {}", e),
+                                                    }
+                                                }
+                                                other => warn!("unknown message type: {}", other),
+                                            }
                                         }
-                                        Err(e) => warn!("bad msg: {}", e),
+                                        Err(e) => warn!("bad msg (not JSON): {}", e),
                                     }
                                 }
                                 Ok(Some(Ok(Message::Close(_)))) | Ok(None) => break,

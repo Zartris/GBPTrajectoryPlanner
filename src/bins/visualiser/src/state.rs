@@ -159,6 +159,40 @@ impl RobotState {
 #[derive(Resource, Default)]
 pub struct RobotStates(pub HashMap<u32, RobotState>);
 
+/// Collision event received from simulator.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct CollisionEvent {
+    pub robot_a: u32,
+    pub robot_b: u32,
+    pub pos: [f32; 3],
+    pub dist: f32,
+}
+
+/// Response to a click-to-inspect query.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct InspectResponse {
+    pub robot_id: u32,
+    pub variable_k: usize,
+    pub mean: f32,
+    pub variance: f32,
+    pub factors: Vec<InspectFactorInfo>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct InspectFactorInfo {
+    pub kind: String,
+    pub msg_eta: f32,
+    pub msg_lambda: f32,
+}
+
+/// Bevy resource: queue of collision events from simulator.
+#[derive(Resource, Default)]
+pub struct CollisionInbox(pub Arc<Mutex<VecDeque<CollisionEvent>>>);
+
+/// Bevy resource: queue of inspect responses from simulator.
+#[derive(Resource, Default)]
+pub struct InspectInbox(pub Arc<Mutex<VecDeque<InspectResponse>>>);
+
 /// Maximum number of positions retained per robot in the trace ring buffer.
 pub const TRACE_CAP: usize = 10_000;
 
