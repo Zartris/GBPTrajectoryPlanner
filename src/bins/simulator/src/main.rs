@@ -97,7 +97,7 @@ async fn main() {
 
     // Watch channel for live config hot-reload.
     // The sender lives in the command handler; each agent_task holds a receiver.
-    let (config_tx, _config_rx_dummy): (watch::Sender<GbpConfig>, _) = watch::channel(config);
+    let (config_tx, _) = watch::channel(config);
 
     // Load scenario
     let scenario_str = std::fs::read_to_string(&args.scenario)
@@ -331,8 +331,13 @@ async fn main() {
                                 match serde_json::from_value::<toml_config::TomlConfig>(params_val.clone()) {
                                     Ok(tc) => {
                                         let new_config: GbpConfig = tc.into();
-                                        let _ = config_tx.send(new_config);
-                                        info!("config updated via set_params: d_safe={}, v_max={}", new_config.d_safe, new_config.v_max_default);
+                                        // Validate before propagating — reject nonsensical values
+                                        if let Err(e) = std::panic::catch_unwind(|| toml_config::validate(&new_config)) {
+                                            warn!("set_params: validation failed: {:?}", e);
+                                        } else {
+                                            let _ = config_tx.send(new_config);
+                                            info!("config updated via set_params: d_safe={}, v_max={}", new_config.d_safe, new_config.v_max_default);
+                                        }
                                     }
                                     Err(e) => {
                                         warn!("set_params: failed to parse params: {}", e);

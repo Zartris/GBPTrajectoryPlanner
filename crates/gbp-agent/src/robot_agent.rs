@@ -218,6 +218,7 @@ impl<C: CommsInterface> RobotAgent<C> {
         }
 
         // InterRobot factors: d_safe, sigma, decay_alpha
+        // Collect indices first — can't iterate ir_set while mutably borrowing graph.
         let ir_indices: Vec<usize, MAX_IR_FACTORS> = self.ir_set.iter()
             .map(|&(_, _, fidx)| fidx)
             .collect();
