@@ -262,6 +262,18 @@ fn draw_hud(
                 // Proximity screenshot addon
                 section_heading(ui, "Proximity Screenshot", heading_color);
                 styled_toggle(ui, &mut addon_config.proximity_screenshot.enabled, "Prox screenshot");
+                if addon_config.proximity_screenshot.enabled {
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.label(egui::RichText::new("Output dir").color(dim).size(10.5));
+                        ui.text_edit_singleline(&mut addon_config.proximity_screenshot.output_dir);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.label(egui::RichText::new("Cooldown (s)").color(dim).size(10.5));
+                        ui.add(egui::Slider::new(&mut addon_config.proximity_screenshot.cooldown_secs, 0.1..=10.0).max_decimals(1));
+                    });
+                }
 
                 ui.add_space(6.0);
 
