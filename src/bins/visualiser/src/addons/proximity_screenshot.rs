@@ -45,30 +45,29 @@ fn proximity_screenshot_system(
     config: Res<AddonConfig>,
     mut alerts: MessageReader<ProximityAlert>,
     mut shot_count: Local<u64>,
+    mut last_shot_time: Local<f32>,
 ) {
     if !config.proximity_screenshot.enabled {
-        // Still drain alerts to avoid message backup.
         for _ in alerts.read() {}
         return;
     }
 
+    let now = api.elapsed_secs();
+    let cooldown = config.proximity_screenshot.cooldown_secs;
+
     for alert in alerts.read() {
+        // Respect cooldown between screenshots
+        if now - *last_shot_time < cooldown {
+            continue;
+        }
+
+        *last_shot_time = now;
         let idx = *shot_count;
         *shot_count += 1;
 
         api.log(&format!(
-            "PROXIMITY SCREENSHOT: r{} <-> r{} dist={:.3}m (d_safe={:.3}m) \
-             pos_a=({:.2},{:.2},{:.2}) pos_b=({:.2},{:.2},{:.2})",
-            alert.robot_a,
-            alert.robot_b,
-            alert.distance,
-            alert.d_safe,
-            alert.position_a[0],
-            alert.position_a[1],
-            alert.position_a[2],
-            alert.position_b[0],
-            alert.position_b[1],
-            alert.position_b[2],
+            "PROXIMITY SCREENSHOT: r{} <-> r{} dist={:.3}m (d_safe={:.3}m)",
+            alert.robot_a, alert.robot_b, alert.distance, alert.d_safe,
         ));
 
         let dir = &config.proximity_screenshot.output_dir;

@@ -113,8 +113,11 @@ pub struct ProximityScreenshotConfig {
     /// Whether the addon is active.
     pub enabled: bool,
     /// Output directory for proximity screenshot PNGs.
-    /// Files are named `proximity_{robotA}_{robotB}_{timestamp}.png`.
+    /// Files are named `proximity_{robotA}_{robotB}_{count}.png`.
     pub output_dir: String,
+    /// Minimum delay (seconds) between screenshots. Prevents flooding
+    /// when robots stay close for extended periods.
+    pub cooldown_secs: f32,
 }
 
 impl Default for ProximityScreenshotConfig {
@@ -122,6 +125,7 @@ impl Default for ProximityScreenshotConfig {
         Self {
             enabled: false,
             output_dir: "/tmp".to_string(),
+            cooldown_secs: 0.5,
         }
     }
 }
