@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::time::{interval, Duration};
 use gbp_agent::RobotAgent;
 use gbp_comms::{CommsInterface, ObservationUpdate, RobotBroadcast, RobotStateMsg, RobotSource};
@@ -137,6 +137,11 @@ impl AgentRunner {
         let _ = self.agent.comms_mut().broadcast(&msg);
     }
 
+    /// Propagate a new GbpConfig into the agent (live config hot-reload).
+    pub fn apply_config(&mut self, config: &GbpConfig) {
+        self.agent.update_config(config);
+    }
+
     /// Edge IDs for the planned path (for visualiser dashed gizmo).
     pub fn planned_edge_ids(&self) -> HVec<EdgeId, { gbp_map::MAX_PATH_EDGES }> {
         let mut ids = HVec::new();
@@ -174,6 +179,7 @@ pub struct StepOut {
 /// Runs at configurable rate (default 50 Hz): reads global position, steps agent, writes velocity back.
 /// sim_state: -1 = running, 0 = paused, N>0 = step N ticks then pause.
 /// tick_interval_us: microseconds per tick (default 20_000 = 50 Hz).
+/// config_rx: watch receiver for live GbpConfig hot-reload.
 pub async fn agent_task(
     physics: Arc<Mutex<PhysicsState>>,
     runner: Arc<Mutex<AgentRunner>>,
@@ -181,6 +187,7 @@ pub async fn agent_task(
     robot_id: u32,
     sim_state: Arc<AtomicI32>,
     tick_interval_us: Arc<AtomicU32>,
+    mut config_rx: watch::Receiver<GbpConfig>,
 ) {
     let mut current_us = tick_interval_us.load(Ordering::Relaxed);
     let mut ticker = interval(Duration::from_micros(current_us as u64));
@@ -192,6 +199,14 @@ pub async fn agent_task(
         if new_us != current_us {
             current_us = new_us;
             ticker = interval(Duration::from_micros(current_us as u64));
+        }
+
+        // Check for live config update from the watch channel.
+        if config_rx.has_changed().unwrap_or(false) {
+            let new_config = *config_rx.borrow_and_update();
+            runner.lock().unwrap_or_else(|e| e.into_inner()).apply_config(&new_config);
+            tracing::info!("R{}: config hot-reloaded (d_safe={}, v_max={})",
+                robot_id, new_config.d_safe, new_config.v_max_default);
         }
 
         let state_val = sim_state.load(Ordering::Relaxed);

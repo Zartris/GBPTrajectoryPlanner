@@ -7,10 +7,11 @@ pub mod toml_config;
 
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use gbp_comms::{RobotBroadcast, RobotStateMsg};
+use gbp_core::GbpConfig;
 use gbp_map::map::{EdgeId, Map, NodeId, NodeType};
 use heapless::Vec as HVec;
 use physics::PhysicsState;
@@ -93,6 +94,10 @@ async fn main() {
     };
     info!("config loaded: d_safe={}, iters={}/{}, v_min={}, v_max={}",
         config.d_safe, config.internal_iters, config.external_iters, config.v_min, config.v_max_default);
+
+    // Watch channel for live config hot-reload.
+    // The sender lives in the command handler; each agent_task holds a receiver.
+    let (config_tx, _config_rx_dummy): (watch::Sender<GbpConfig>, _) = watch::channel(config);
 
     // Load scenario
     let scenario_str = std::fs::read_to_string(&args.scenario)
@@ -212,6 +217,7 @@ async fn main() {
             i as u32,
             Arc::clone(&sim_state),
             Arc::clone(&tick_interval_us),
+            config_tx.subscribe(),
         ));
     }
 
@@ -277,9 +283,10 @@ async fn main() {
         }
     });
 
-    // Command handler (pause/resume/step/set_timescale)
+    // Command handler (pause/resume/step/set_timescale/set_params)
     let cmd_sim_state = Arc::clone(&sim_state);
     let cmd_tick_interval_us = Arc::clone(&tick_interval_us);
+    // config_tx is moved into the command handler so it can send new configs.
     tokio::spawn(async move {
         while let Some(json) = cmd_rx.recv().await {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
@@ -313,6 +320,26 @@ async fn main() {
                                 }
                             } else {
                                 warn!("set_timescale: missing or invalid 'scale' field");
+                            }
+                        }
+                        "set_params" => {
+                            // Accept a partial TOML-like JSON object matching TomlConfig
+                            // structure, or a flat GbpConfig-like object. We use the
+                            // simplest approach: deserialize the "params" value as
+                            // TomlConfig and convert, falling back on missing fields.
+                            if let Some(params_val) = v.get("params") {
+                                match serde_json::from_value::<toml_config::TomlConfig>(params_val.clone()) {
+                                    Ok(tc) => {
+                                        let new_config: GbpConfig = tc.into();
+                                        let _ = config_tx.send(new_config);
+                                        info!("config updated via set_params: d_safe={}, v_max={}", new_config.d_safe, new_config.v_max_default);
+                                    }
+                                    Err(e) => {
+                                        warn!("set_params: failed to parse params: {}", e);
+                                    }
+                                }
+                            } else {
+                                warn!("set_params: missing 'params' field");
                             }
                         }
                         _ => {}
