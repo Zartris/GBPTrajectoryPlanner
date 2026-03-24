@@ -294,17 +294,18 @@ async fn main() {
                             info!("simulation RESUMED");
                         }
                         "step" => {
-                            let ticks = v.get("ticks")
+                            let ticks = (v.get("ticks")
                                 .and_then(|t| t.as_i64())
                                 .unwrap_or(1)
-                                .max(1) as i32;
+                                .max(1)
+                                .min(i32::MAX as i64)) as i32;
                             cmd_sim_state.store(ticks, Ordering::Relaxed);
                             info!("simulation STEP {} ticks", ticks);
                         }
                         "set_timescale" => {
                             if let Some(scale) = v.get("scale").and_then(|s| s.as_f64()) {
                                 if scale > 0.0 {
-                                    let us = (20_000.0 / scale) as u32;
+                                    let us = ((20_000.0 / scale).clamp(100.0, 60_000_000.0)) as u32;
                                     cmd_tick_interval_us.store(us, Ordering::Relaxed);
                                     info!("simulation timescale={:.3}x tick_interval={}us", scale, us);
                                 } else {

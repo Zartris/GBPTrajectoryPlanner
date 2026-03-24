@@ -385,6 +385,16 @@ impl<'w, 's> VisApi<'w, 's> {
         self.send_sim_command(r#"{"command":"resume"}"#);
     }
 
+    /// Step the simulation by N ticks (default 1).
+    pub fn step_sim(&mut self, ticks: u32) {
+        self.send_sim_command(&format!(r#"{{"command":"step","ticks":{}}}"#, ticks.max(1)));
+    }
+
+    /// Set simulation timescale (1.0 = real-time, 2.0 = 2x, 0.5 = half).
+    pub fn set_timescale(&mut self, scale: f32) {
+        self.send_sim_command(&format!(r#"{{"command":"set_timescale","scale":{}}}"#, scale));
+    }
+
     // =========================================================================
     // App lifecycle
     // =========================================================================

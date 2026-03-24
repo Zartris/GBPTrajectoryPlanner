@@ -199,8 +199,8 @@ pub async fn agent_task(
             // Paused — skip.
             continue;
         } else if state_val > 0 {
-            // Step mode: run this tick; physics_task handles the decrement — no double-decrement here.
-            // We just check whether to run; the physics_task is the authoritative decrementer.
+            // Step mode: run this tick. N physics_tasks each CAS-race to decrement;
+            // exactly one succeeds per tick, all run. Agent tasks never decrement.
         }
         // state_val == -1 (running) or step mode: proceed with agent step.
 
