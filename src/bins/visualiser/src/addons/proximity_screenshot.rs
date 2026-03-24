@@ -54,6 +54,14 @@ fn proximity_screenshot_system(
 
     let now = api.elapsed_secs();
     let cooldown = config.proximity_screenshot.cooldown_secs;
+    let dir = &config.proximity_screenshot.output_dir;
+
+    // Ensure output directory exists on first use.
+    if *shot_count == 0 {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            tracing::warn!("[proximity_screenshot] cannot create output dir '{dir}': {e}");
+        }
+    }
 
     for alert in alerts.read() {
         // Respect cooldown between screenshots

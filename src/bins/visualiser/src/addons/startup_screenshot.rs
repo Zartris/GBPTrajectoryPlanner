@@ -68,6 +68,12 @@ fn screenshot_trigger(
     *done = true;
 
     let path = &config.screenshot.output_path;
+    // Ensure parent directory exists.
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            tracing::warn!("[screenshot] cannot create dir '{}': {e}", parent.display());
+        }
+    }
     api.screenshot(path);
     api.log(&format!("startup screenshot -> {path}"));
 

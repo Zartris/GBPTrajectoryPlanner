@@ -209,7 +209,7 @@ proximity_threshold = 1.5
 # Proximity screenshot — captures PNG on proximity alert
 [addons.proximity_screenshot]
 enabled = false
-output_dir = "/tmp"
+output_dir = "/repo/tmp/proximity-screenshots"
 cooldown_secs = 0.5
 
 # State change logger — logs robot state transitions
