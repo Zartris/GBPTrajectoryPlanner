@@ -94,6 +94,31 @@ The dev container uses `llvmpipe` (software renderer). Several Bevy/egui feature
 
 **To re-enable inspector on GPU:** In `main.rs`, uncomment `.register_type::<GizmoConfigStore>()` and `.add_plugins(bevy_inspector_egui::DefaultInspectorConfigPlugin)`. Add `"sysinfo_plugin"` back to bevy features in workspace `Cargo.toml`.
 
+## VisApi Addon System — For AI Agents
+
+The visualiser has a built-in addon system (`vis_api` + `addons/`) designed to give AI agents **eyes and ears** in the simulation. Agents should use this system to debug, test, and verify their work before handing over to the user.
+
+### How to use
+- **`VisApi`** is a Bevy `SystemParam` — add `mut api: VisApi` to any system to get access to screenshots, camera control, draw toggles, robot state, and simulator commands.
+- **Events** (`ProximityAlert`, `RobotStateChanged`, `DataReceived`) — subscribe via `MessageReader<T>` to react when things happen (pub/sub, not polling).
+- **Addons** are Bevy Plugins in `src/bins/visualiser/src/addons/`. Create a file, register in `addons/mod.rs`, done.
+- **Config** lives in `[addons]` section of `config/config.toml`. All addons have `enabled` flags and are configurable at runtime via the Control panel UI.
+
+### What agents should do
+- **Create addons freely** — write as many as needed for debugging, testing, visualization. They are cheap (no overhead when disabled).
+- **Take screenshots** for visual verification (`api.screenshot("/tmp/test.png")`) instead of asking the user to check.
+- **Use events** to detect problems: `ProximityAlert` for near-collisions, `RobotStateChanged` for unexpected state transitions.
+- **Expand the API** as needed — add new methods to `VisApi`, new event types to `vis_events.rs`, new addons. The system is designed to grow.
+- **Test before handover** — verify features work via addon-driven automated testing, not manual user testing.
+
+### Key files
+- `src/bins/visualiser/src/vis_api.rs` — VisApi SystemParam (25+ methods)
+- `src/bins/visualiser/src/vis_events.rs` — Event definitions
+- `src/bins/visualiser/src/vis_event_systems.rs` — Event emission (change-triggered, not per-frame)
+- `src/bins/visualiser/src/addon_config.rs` — Config structs (parsed from TOML)
+- `src/bins/visualiser/src/addons/` — Addon plugins
+- `docs/vis-api-status-report.md` — Full API reference and status
+
 ## Deployment Modes
 - **Simulator only**: `visualiser ←WebSocket→ simulator`
 - **Hardware only**: `visualiser ←WebSocket→ bridge ←UDP→ ESP32 fleet`
