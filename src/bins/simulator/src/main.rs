@@ -6,11 +6,12 @@ pub mod agent_runner;
 pub mod toml_config;
 
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::{broadcast, mpsc};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
+use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use gbp_comms::{RobotBroadcast, RobotStateMsg};
+use gbp_core::GbpConfig;
 use gbp_map::map::{EdgeId, Map, NodeId, NodeType};
 use heapless::Vec as HVec;
 use physics::PhysicsState;
@@ -94,6 +95,10 @@ async fn main() {
     info!("config loaded: d_safe={}, iters={}/{}, v_min={}, v_max={}",
         config.d_safe, config.internal_iters, config.external_iters, config.v_min, config.v_max_default);
 
+    // Watch channel for live config hot-reload.
+    // The sender lives in the command handler; each agent_task holds a receiver.
+    let (config_tx, _) = watch::channel(config);
+
     // Load scenario
     let scenario_str = std::fs::read_to_string(&args.scenario)
         .unwrap_or_else(|e| panic!("cannot read scenario {}: {}", args.scenario.display(), e));
@@ -115,17 +120,33 @@ async fn main() {
 
     let (bcast_tx, _) = broadcast::channel::<RobotBroadcast>(64);
 
-    // Shared pause flag — checked by physics and agent tasks
-    let sim_paused = Arc::new(AtomicBool::new(false));
+    // Shared simulation state — checked by physics and agent tasks.
+    // -1 = running, 0 = paused. Step counts are controlled via `tick_epoch`.
+    let sim_state = Arc::new(AtomicI32::new(-1));
+    // Tick interval in microseconds (default 20_000 = 50 Hz).
+    let tick_interval_us = Arc::new(AtomicU32::new(20_000));
+    // Epoch counter for step mode — incremented by N on step(N).
+    // Each task tracks its own local_epoch and only ticks when behind.
+    let tick_epoch = Arc::new(AtomicU64::new(0));
 
     // Relay: RobotStateMsg -> JSON
+    // Envelope wraps any payload with a `"type"` discriminator in a single serialization pass,
+    // avoiding the double-allocation of to_value() + to_string().
+    #[derive(serde::Serialize)]
+    struct Envelope<'a, T: serde::Serialize> {
+        #[serde(rename = "type")]
+        msg_type: &'a str,
+        #[serde(flatten)]
+        payload: &'a T,
+    }
+
     let tx_json_relay = tx_json.clone();
     let mut rx_state = tx_state.subscribe();
     tokio::spawn(async move {
         loop {
             match rx_state.recv().await {
                 Ok(msg) => {
-                    match serde_json::to_string(&msg) {
+                    match serde_json::to_string(&Envelope { msg_type: "state", payload: &msg }) {
                         Ok(json) => { let _ = tx_json_relay.send(json); }
                         Err(e) => tracing::error!("relay: JSON serialize failed: {}", e),
                     }
@@ -187,15 +208,31 @@ async fn main() {
         all_runners.push(Arc::clone(&runner_arc));
         all_physics.push(Arc::clone(&physics));
 
-        tokio::spawn(physics::physics_task(Arc::clone(&physics), Arc::clone(&sim_paused)));
+        tokio::spawn(physics::physics_task(
+            Arc::clone(&physics),
+            Arc::clone(&sim_state),
+            Arc::clone(&tick_epoch),
+            Arc::clone(&tick_interval_us),
+        ));
         tokio::spawn(agent_task(
-            Arc::clone(&physics), runner_arc, tx_state.clone(), i as u32, Arc::clone(&sim_paused)
+            Arc::clone(&physics),
+            runner_arc,
+            tx_state.clone(),
+            i as u32,
+            Arc::clone(&sim_state),
+            Arc::clone(&tick_epoch),
+            Arc::clone(&tick_interval_us),
+            config_tx.subscribe(),
         ));
     }
 
+    // Clone all_runners for command handler (inspect command) before collision monitor moves it.
+    let cmd_runners = all_runners.clone();
+
     // ── N-robot collision monitor (10 Hz, pairwise 3D distance) ──
     let map_mon = Arc::clone(&map_arc);
-    let d_safe = config.d_safe;
+    let config_rx_mon = config_tx.subscribe();
+    let tx_json_collision = tx_json.clone();
     tokio::spawn(async move {
         const CHASSIS_LEN: f32 = 1.15;
         let n = all_physics.len();
@@ -233,6 +270,17 @@ async fn main() {
                             i, si, vi, pi[0], pi[1], pi[2],
                             j, sj, vj, pj[0], pj[1], pj[2],
                         );
+                        // Midpoint in map coordinates — visualiser converts to Bevy coords.
+                        let mid = [
+                            (pi[0] + pj[0]) * 0.5,
+                            (pi[1] + pj[1]) * 0.5,
+                            (pi[2] + pj[2]) * 0.5,
+                        ];
+                        let json = format!(
+                            r#"{{"type":"collision","robot_a":{},"robot_b":{},"pos":[{},{},{}],"dist":{}}}"#,
+                            i, j, mid[0], mid[1], mid[2], dist
+                        );
+                        let _ = tx_json_collision.send(json);
                     }
                 }
             }
@@ -249,21 +297,121 @@ async fn main() {
                         if d < min_dist { min_dist = d; min_pair = (i, j); }
                     }
                 }
+                let d_safe = config_rx_mon.borrow().d_safe;
                 info!("MONITOR: {} robots, min_dist={:.2}m (R{}↔R{}), collisions={}, d_safe={}",
                     n, min_dist, min_pair.0, min_pair.1, collision_count, d_safe);
             }
         }
     });
 
-    // Command handler (pause/resume)
-    let pause_cmd = Arc::clone(&sim_paused);
+    // Command handler (pause/resume/step/set_timescale/set_params/inspect)
+    let cmd_sim_state = Arc::clone(&sim_state);
+    let cmd_tick_epoch = Arc::clone(&tick_epoch);
+    let cmd_tick_interval_us = Arc::clone(&tick_interval_us);
+    let cmd_tx_json = tx_json.clone();
+    // config_tx is moved into the command handler so it can send new configs.
     tokio::spawn(async move {
         while let Some(json) = cmd_rx.recv().await {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
                 if let Some(cmd) = v.get("command").and_then(|c| c.as_str()) {
                     match cmd {
-                        "pause" => { pause_cmd.store(true, Ordering::Relaxed); info!("simulation PAUSED"); }
-                        "resume" => { pause_cmd.store(false, Ordering::Relaxed); info!("simulation RESUMED"); }
+                        "pause" => {
+                            cmd_sim_state.store(0, Ordering::Relaxed);
+                            info!("simulation PAUSED");
+                        }
+                        "resume" => {
+                            cmd_sim_state.store(-1, Ordering::Relaxed);
+                            info!("simulation RESUMED");
+                        }
+                        "step" => {
+                            let ticks = (v.get("ticks")
+                                .and_then(|t| t.as_u64())
+                                .unwrap_or(1)
+                                .max(1)
+                                .min(10_000)) as u64;
+                            // Ensure sim is paused so tasks use epoch gating.
+                            cmd_sim_state.store(0, Ordering::Relaxed);
+                            // Advance global epoch — every task will run exactly `ticks` steps.
+                            cmd_tick_epoch.fetch_add(ticks, Ordering::Relaxed);
+                            info!("simulation STEP {} ticks (epoch={})",
+                                ticks, cmd_tick_epoch.load(Ordering::Relaxed));
+                        }
+                        "set_timescale" => {
+                            if let Some(scale) = v.get("scale").and_then(|s| s.as_f64()) {
+                                if scale > 0.0 {
+                                    let us = ((20_000.0 / scale).clamp(100.0, 60_000_000.0)) as u32;
+                                    cmd_tick_interval_us.store(us, Ordering::Relaxed);
+                                    info!("simulation timescale={:.3}x tick_interval={}us", scale, us);
+                                } else {
+                                    warn!("set_timescale: scale must be > 0, got {}", scale);
+                                }
+                            } else {
+                                warn!("set_timescale: missing or invalid 'scale' field");
+                            }
+                        }
+                        "set_params" => {
+                            // The visualiser sends a flat JSON object matching GbpConfig
+                            // field names. Deserialize directly as GbpConfig.
+                            if let Some(params_val) = v.get("params") {
+                                match serde_json::from_value::<GbpConfig>(params_val.clone()) {
+                                    Ok(new_config) => {
+                                        // Validate before propagating — reject nonsensical values
+                                        match toml_config::validate(&new_config) {
+                                            Ok(()) => {
+                                                let _ = config_tx.send(new_config);
+                                                info!("config updated via set_params: d_safe={}, v_max={}", new_config.d_safe, new_config.v_max_default);
+                                            }
+                                            Err(e) => {
+                                                warn!("set_params: validation failed: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("set_params: failed to parse params: {}", e);
+                                    }
+                                }
+                            } else {
+                                warn!("set_params: missing 'params' field");
+                            }
+                        }
+                        "inspect" => {
+                            if let (Some(robot_id), Some(var_k)) = (
+                                v.get("robot_id").and_then(|r| r.as_u64()),
+                                v.get("variable_k").and_then(|k| k.as_u64()),
+                            ) {
+                                let robot_id = robot_id as usize;
+                                let var_k = var_k as usize;
+                                if let Some(runner) = cmd_runners.get(robot_id) {
+                                    let data = runner.lock().unwrap_or_else(|e| e.into_inner()).inspect_variable(var_k);
+                                    // Build factor summaries JSON array
+                                    let mut factors_json = String::from("[");
+                                    for (i, fs) in data.factor_summaries.iter().enumerate() {
+                                        if i > 0 { factors_json.push(','); }
+                                        let kind_str = match fs.kind {
+                                            gbp_agent::robot_agent::FactorKindTag::Dynamics      => "Dynamics",
+                                            gbp_agent::robot_agent::FactorKindTag::VelocityBound => "VelocityBound",
+                                            gbp_agent::robot_agent::FactorKindTag::InterRobot    => "InterRobot",
+                                        };
+                                        factors_json.push_str(&format!(
+                                            r#"{{"kind":"{}","msg_eta":{},"msg_lambda":{}}}"#,
+                                            kind_str, fs.msg_eta, fs.msg_lambda
+                                        ));
+                                    }
+                                    factors_json.push(']');
+                                    let response = format!(
+                                        r#"{{"type":"inspect_response","robot_id":{},"variable_k":{},"mean":{},"variance":{},"factors":{}}}"#,
+                                        robot_id, var_k, data.mean, data.variance, factors_json
+                                    );
+                                    info!("inspect R{} k={}: mean={:.3} var={:.3} factors={}",
+                                        robot_id, var_k, data.mean, data.variance, data.num_connected_factors);
+                                    let _ = cmd_tx_json.send(response);
+                                } else {
+                                    warn!("inspect: robot_id {} not found (have {} robots)", robot_id, cmd_runners.len());
+                                }
+                            } else {
+                                warn!("inspect: missing robot_id or variable_k");
+                            }
+                        }
                         _ => {}
                     }
                 }

@@ -20,6 +20,8 @@ impl DynamicsFactor {
         Self { var_indices, dt, sigma, v_nom }
     }
     pub fn set_v_nom(&mut self, v: f32) { self.v_nom = v; }
+    pub fn set_sigma(&mut self, sigma: f32) { self.sigma = f32::max(sigma, 1e-6); }
+    pub fn set_timestep(&mut self, dt: f32) { self.dt = f32::max(dt, 1e-6); }
 }
 
 impl Factor for DynamicsFactor {

@@ -87,13 +87,12 @@ pub fn fmt_factor_count(n: usize) -> String {
 fn draw_hud(
     mut ctxs: EguiContexts,
     states: Res<RobotStates>,
-    mut paused: ResMut<SimPaused>,
     diagnostics: Res<DiagnosticsStore>,
     backend: Res<BackendStats>,
-    outbox: Res<WsOutbox>,
     mut draw: ResMut<DrawConfig>,
     mut gizmo_store: ResMut<GizmoConfigStore>,
     mut addon_config: ResMut<AddonConfig>,
+    outbox: Res<WsOutbox>,
     _metrics_vis: Res<MetricsVisible>,
     _inspector_vis: Res<InspectorVisible>,
 ) -> Result {
@@ -138,25 +137,9 @@ fn draw_hud(
     let dim = egui::Color32::from_rgb(120, 130, 150);    // muted text
     let heading_color = egui::Color32::from_rgb(200, 210, 230);
 
-    egui::Window::new(egui::RichText::new("◈  Control").color(heading_color).size(14.0))
+    egui::Window::new(egui::RichText::new("Control").color(heading_color).size(14.0))
         .default_width(220.0)
         .show(ctx, |ui| {
-        // ── Simulation ──
-        ui.add_space(2.0);
-        let btn_text = if paused.0 { "▶  Resume" } else { "⏸  Pause" };
-        if ui.button(egui::RichText::new(btn_text).size(13.0)).clicked() {
-            paused.0 = !paused.0;
-            let cmd = if paused.0 { r#"{"command":"pause"}"# } else { r#"{"command":"resume"}"# };
-            outbox.0.lock().unwrap_or_else(|e| e.into_inner()).push_back(cmd.to_string());
-        }
-        ui.add_space(2.0);
-        ui.label(egui::RichText::new(format!("⬡  {} robots connected", states.0.len()))
-            .color(dim).size(11.0));
-
-        ui.add_space(6.0);
-        ui.separator();
-        ui.add_space(4.0);
-
         // ── Draw Toggles ──
         egui::CollapsingHeader::new(egui::RichText::new("Draw Layers").color(accent).strong().size(12.0))
             .default_open(false)
@@ -306,6 +289,25 @@ fn draw_hud(
                 } else { "—".into() };
                 stat_row(ui, "dist3d", &dist_str, dim);
                 stat_row(ui, "factors", &fmt_factor_count(state.active_factor_count), dim);
+
+                // Inspect button — sends inspect command to simulator for variable 0
+                ui.add_space(3.0);
+                if ui
+                    .small_button(
+                        egui::RichText::new("Inspect k=0")
+                            .size(10.0)
+                            .color(egui::Color32::from_rgb(180, 220, 255)),
+                    )
+                    .on_hover_text("Query detailed GBP variable diagnostics from simulator")
+                    .clicked()
+                {
+                    let cmd = format!(
+                        r#"{{"command":"inspect","robot_id":{},"variable_k":0}}"#,
+                        id
+                    );
+                    let mut q = outbox.0.lock().unwrap_or_else(|e| e.into_inner());
+                    q.push_back(cmd);
+                }
             });
         }
     }

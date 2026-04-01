@@ -3,6 +3,11 @@ name    = "gbp-core"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+serde = ["dep:serde"]
+
 [dependencies]
 heapless = { workspace = true }
 libm     = { workspace = true }
+serde    = { workspace = true, optional = true }

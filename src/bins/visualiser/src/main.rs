@@ -4,6 +4,8 @@ mod map_scene;
 mod camera;
 mod robot_render;
 mod ui;
+mod settings_panel;
+mod inspector;
 mod vis_api;
 mod vis_events;
 mod vis_event_systems;
@@ -18,15 +20,17 @@ use bevy::render::renderer::RenderAdapterInfo;
 use bevy_egui::EguiPlugin;
 // bevy_inspector_egui — used via DefaultInspectorConfigPlugin + manual ui_for_world
 use serde::Deserialize;
-use state::{DrawConfig, InspectorVisible, MapRes, RobotStates, WsInbox, WsOutbox};
+use state::{CollisionInbox, DrawConfig, InspectInbox, InspectorVisible, LiveParams, MapRes, RobotStates, WsInbox, WsOutbox};
 use map_scene::MapScenePlugin;
 use camera::CameraPlugin;
 use robot_render::RobotRenderPlugin;
 use ui::UiPlugin;
+use settings_panel::SettingsPanelPlugin;
+use inspector::InspectorPlugin;
 use addon_config::AddonConfig;
 use tracing_subscriber::EnvFilter;
 
-/// TOML structure for the [visualisation.draw] section plus [gbp.interrobot] and [addons].
+/// TOML structure for the [visualisation.draw] section plus [gbp.*] and [addons].
 #[derive(Deserialize, Default)]
 struct VisConfig {
     #[serde(default)]
@@ -34,18 +38,56 @@ struct VisConfig {
     #[serde(default)]
     gbp: GbpSection,
     #[serde(default)]
+    robot: RobotToml,
+    #[serde(default)]
     addons: AddonConfig,
 }
 
 #[derive(Deserialize, Default)]
 struct GbpSection {
+    // Top-level [gbp] fields
+    msg_damping: Option<f32>,
+    internal_iters: Option<u8>,
+    external_iters: Option<u8>,
+    timestep: Option<f32>,
+    init_variance: Option<f32>,
+    anchor_precision: Option<f32>,
+    #[serde(default)]
+    dynamics: DynamicsToml,
     #[serde(default)]
     interrobot: InterRobotToml,
+    #[serde(default)]
+    velocity_bound: VelocityBoundToml,
+}
+
+#[derive(Deserialize, Default)]
+struct DynamicsToml {
+    sigma: Option<f32>,
 }
 
 #[derive(Deserialize, Default)]
 struct InterRobotToml {
     d_safe: Option<f32>,
+    sigma: Option<f32>,
+    activation_range: Option<f32>,
+    decay_alpha: Option<f32>,
+    front_damping: Option<f32>,
+}
+
+#[derive(Deserialize, Default)]
+struct VelocityBoundToml {
+    v_min: Option<f32>,
+    v_max_default: Option<f32>,
+    kappa: Option<f32>,
+    margin: Option<f32>,
+    max_precision: Option<f32>,
+}
+
+#[derive(Deserialize, Default)]
+struct RobotToml {
+    max_accel: Option<f32>,
+    max_jerk: Option<f32>,
+    max_speed: Option<f32>,
 }
 
 #[derive(Deserialize, Default)]
@@ -118,16 +160,41 @@ fn main() {
     // Load draw config from the same config.toml the simulator uses
     let config_path = std::env::var("CONFIG_PATH")
         .unwrap_or_else(|_| "config/config.toml".to_string());
-    let (draw_config, addon_config) = if let Ok(toml_str) = std::fs::read_to_string(&config_path) {
+    let (draw_config, addon_config, live_params) = if let Ok(toml_str) = std::fs::read_to_string(&config_path) {
         let vc: VisConfig = toml::from_str(&toml_str).unwrap_or_default();
         let mut dc = DrawConfig::from(vc.visualisation.draw);
         // Propagate [gbp.interrobot] d_safe so the IR color gradient uses the real value
         if let Some(d) = vc.gbp.interrobot.d_safe {
             dc.ir_d_safe = d.max(1e-3);
         }
-        (dc, vc.addons)
+        // Build LiveParams from parsed TOML, falling back to defaults
+        let def = LiveParams::default();
+        let lp = LiveParams {
+            msg_damping: vc.gbp.msg_damping.unwrap_or(def.msg_damping),
+            internal_iters: vc.gbp.internal_iters.unwrap_or(def.internal_iters),
+            external_iters: vc.gbp.external_iters.unwrap_or(def.external_iters),
+            sigma_dynamics: vc.gbp.dynamics.sigma.unwrap_or(def.sigma_dynamics),
+            gbp_timestep: vc.gbp.timestep.unwrap_or(def.gbp_timestep),
+            d_safe: vc.gbp.interrobot.d_safe.unwrap_or(def.d_safe),
+            sigma_interrobot: vc.gbp.interrobot.sigma.unwrap_or(def.sigma_interrobot),
+            ir_activation_range: vc.gbp.interrobot.activation_range.unwrap_or(def.ir_activation_range),
+            ir_decay_alpha: vc.gbp.interrobot.decay_alpha.unwrap_or(def.ir_decay_alpha),
+            front_damping: vc.gbp.interrobot.front_damping.unwrap_or(def.front_damping),
+            v_min: vc.gbp.velocity_bound.v_min.unwrap_or(def.v_min),
+            v_max_default: vc.gbp.velocity_bound.v_max_default.unwrap_or(def.v_max_default),
+            vb_kappa: vc.gbp.velocity_bound.kappa.unwrap_or(def.vb_kappa),
+            vb_margin: vc.gbp.velocity_bound.margin.unwrap_or(def.vb_margin),
+            vb_max_precision: vc.gbp.velocity_bound.max_precision.unwrap_or(def.vb_max_precision),
+            max_accel: vc.robot.max_accel.unwrap_or(def.max_accel),
+            max_jerk: vc.robot.max_jerk.unwrap_or(def.max_jerk),
+            max_speed: vc.robot.max_speed.unwrap_or(def.max_speed),
+            init_variance: vc.gbp.init_variance.unwrap_or(def.init_variance),
+            anchor_precision: vc.gbp.anchor_precision.unwrap_or(def.anchor_precision),
+            timescale: def.timescale,
+        };
+        (dc, vc.addons, lp)
     } else {
-        (DrawConfig::default(), AddonConfig::default())
+        (DrawConfig::default(), AddonConfig::default(), LiveParams::default())
     };
 
     // Load map (default path or from env)
@@ -143,7 +210,15 @@ fn main() {
         .unwrap_or_else(|_| "ws://localhost:3000/ws".to_string());
     let inbox: Arc<Mutex<VecDeque<_>>> = Arc::new(Mutex::new(VecDeque::new()));
     let outbox: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
-    let ws_shutdown = ws_client::spawn_ws_client(ws_url, Arc::clone(&inbox), Arc::clone(&outbox));
+    let collision_inbox: Arc<Mutex<VecDeque<_>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let inspect_inbox: Arc<Mutex<VecDeque<_>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let ws_shutdown = ws_client::spawn_ws_client(
+        ws_url,
+        Arc::clone(&inbox),
+        Arc::clone(&outbox),
+        Arc::clone(&collision_inbox),
+        Arc::clone(&inspect_inbox),
+    );
 
     App::new()
         // Cap frame rate: ~60 FPS when focused, ~10 FPS when unfocused.
@@ -186,11 +261,16 @@ fn main() {
         .insert_resource(RobotStates::default())
         .insert_resource(WsInbox(inbox))
         .insert_resource(WsOutbox(outbox))
+        .insert_resource(CollisionInbox(collision_inbox))
+        .insert_resource(InspectInbox(inspect_inbox))
+        .insert_resource(live_params) // must be before SettingsPanelPlugin (init_resource is no-op if exists)
         .add_systems(Startup, log_gpu_info)
         .add_plugins(MapScenePlugin)
         .add_plugins(CameraPlugin)
         .add_plugins(RobotRenderPlugin)
         .add_plugins(UiPlugin)
+        .add_plugins(SettingsPanelPlugin)
+        .add_plugins(InspectorPlugin)
         .add_plugins(addons::AddonPlugins)
         .run();
 

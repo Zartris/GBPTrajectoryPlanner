@@ -3,10 +3,10 @@
 //! Which edge the robot is on is derived from the trajectory, not managed by physics.
 
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::broadcast;
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
+use tokio::sync::{broadcast, watch};
 use tokio::time::{interval, Duration};
-use gbp_agent::RobotAgent;
+use gbp_agent::{RobotAgent, robot_agent::InspectData};
 use gbp_comms::{CommsInterface, ObservationUpdate, RobotBroadcast, RobotStateMsg, RobotSource};
 use gbp_core::GbpConfig;
 use gbp_map::map::{EdgeId, Map};
@@ -137,6 +137,16 @@ impl AgentRunner {
         let _ = self.agent.comms_mut().broadcast(&msg);
     }
 
+    /// Propagate a new GbpConfig into the agent (live config hot-reload).
+    pub fn apply_config(&mut self, config: &GbpConfig) {
+        self.agent.update_config(config);
+    }
+
+    /// Return detailed diagnostic data for variable `k` (delegates to RobotAgent).
+    pub fn inspect_variable(&self, k: usize) -> InspectData {
+        self.agent.inspect_variable(k)
+    }
+
     /// Edge IDs for the planned path (for visualiser dashed gizmo).
     pub fn planned_edge_ids(&self) -> HVec<EdgeId, { gbp_map::MAX_PATH_EDGES }> {
         let mut ids = HVec::new();
@@ -171,18 +181,55 @@ pub struct StepOut {
     pub belief_spread: f32,
 }
 
-/// Runs at 50 Hz: reads global position, steps agent, writes velocity back.
+/// Runs at configurable rate (default 50 Hz): reads global position, steps agent, writes velocity back.
+/// sim_state: -1 = running, 0 = paused (epoch-based step uses paused state).
+/// tick_epoch: global epoch counter; incremented by N when a step(N) command arrives.
+/// tick_interval_us: microseconds per tick (default 20_000 = 50 Hz).
+/// config_rx: watch receiver for live GbpConfig hot-reload.
 pub async fn agent_task(
     physics: Arc<Mutex<PhysicsState>>,
     runner: Arc<Mutex<AgentRunner>>,
     tx: broadcast::Sender<RobotStateMsg>,
     robot_id: u32,
-    paused: Arc<AtomicBool>,
+    sim_state: Arc<AtomicI32>,
+    tick_epoch: Arc<AtomicU64>,
+    tick_interval_us: Arc<AtomicU32>,
+    mut config_rx: watch::Receiver<GbpConfig>,
 ) {
-    let mut ticker = interval(Duration::from_millis(20)); // 50 Hz (matches physics)
+    let mut current_us = tick_interval_us.load(Ordering::Relaxed);
+    let mut ticker = interval(Duration::from_micros(current_us as u64));
+    let mut local_epoch: u64 = tick_epoch.load(Ordering::Relaxed);
     loop {
         ticker.tick().await;
-        if paused.load(Ordering::Relaxed) { continue; }
+
+        // Check if interval changed; if so, reset ticker.
+        let new_us = tick_interval_us.load(Ordering::Relaxed);
+        if new_us != current_us {
+            current_us = new_us;
+            ticker = interval(Duration::from_micros(current_us as u64));
+        }
+
+        // Check for live config update from the watch channel.
+        if config_rx.has_changed().unwrap_or(false) {
+            let new_config = *config_rx.borrow_and_update();
+            runner.lock().unwrap_or_else(|e| e.into_inner()).apply_config(&new_config);
+            tracing::info!("R{}: config hot-reloaded (d_safe={}, v_max={})",
+                robot_id, new_config.d_safe, new_config.v_max_default);
+        }
+
+        let state_val = sim_state.load(Ordering::Relaxed);
+        if state_val == -1 {
+            // Free-running: proceed normally, advance local epoch to stay in sync.
+            local_epoch = tick_epoch.load(Ordering::Relaxed);
+        } else {
+            // Paused / step mode: only tick if behind the global epoch.
+            let global = tick_epoch.load(Ordering::Relaxed);
+            if local_epoch >= global {
+                continue;
+            }
+            local_epoch += 1;
+        }
+        // Free-running or epoch-based step: proceed with agent step.
 
         let global_s = physics.lock().unwrap_or_else(|e| e.into_inner()).position_s;
 

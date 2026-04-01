@@ -8,7 +8,7 @@
 //! convergence.
 
 use heapless::Vec;
-use crate::factor_node::{Factor, FactorKind, FactorNode};
+use crate::factor_node::{FactorKind, FactorNode};
 use crate::variable_node::VariableNode;
 
 /// GBP factor graph with const-generic capacity.
@@ -32,6 +32,9 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
     }
 
     pub fn factor_count(&self) -> usize { self.factors.len() }
+
+    /// Update message damping (live config propagation).
+    pub fn set_msg_damping(&mut self, damping: f32) { self.msg_damping = damping; }
 
     /// Re-accumulate variable beliefs from scratch (prior + all factor messages).
     /// Call after adding/removing factors to clear stale message contributions.
@@ -65,6 +68,11 @@ impl<const K: usize, const F: usize> FactorGraph<K, F> {
     /// Get mutable access to a factor's FactorKind (for setting v_nom, Jacobians, etc.)
     pub fn get_factor_kind_mut(&mut self, idx: usize) -> Option<&mut FactorKind> {
         self.factors.get_mut(idx).map(|f| &mut f.kind)
+    }
+
+    /// Iterate over all FactorNodes (immutable). Used by inspect_variable.
+    pub fn iter_factor_nodes(&self) -> impl Iterator<Item = &FactorNode> {
+        self.factors.iter()
     }
 
     /// Run N iterations of damped GBP message passing.

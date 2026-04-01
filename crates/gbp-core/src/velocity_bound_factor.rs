@@ -102,6 +102,10 @@ impl VelocityBoundFactor {
     pub fn set_v_max(&mut self, v: f32) {
         self.v_max = v;
     }
+    pub fn set_v_min(&mut self, v: f32) { self.v_min = v; }
+    pub fn set_kappa(&mut self, kappa: f32) { self.kappa = kappa; }
+    pub fn set_margin(&mut self, margin: f32) { self.margin = margin; }
+    pub fn set_max_precision(&mut self, mp: f32) { self.max_precision = mp; }
 
     /// BIPM-inspired adaptive precision for a single constraint g <= 0.
     /// Returns 0 when well under limit, rising to `self.max_precision` at the boundary.

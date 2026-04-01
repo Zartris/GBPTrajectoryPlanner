@@ -375,14 +375,24 @@ impl<'w, 's> VisApi<'w, 's> {
         q.push_back(json.to_owned());
     }
 
-    /// Send a `{"cmd":"pause"}` command to the simulator.
+    /// Send a `{"command":"pause"}` command to the simulator.
     pub fn pause_sim(&mut self) {
-        self.send_sim_command(r#"{"cmd":"pause"}"#);
+        self.send_sim_command(r#"{"command":"pause"}"#);
     }
 
-    /// Send a `{"cmd":"resume"}` command to the simulator.
+    /// Send a `{"command":"resume"}` command to the simulator.
     pub fn resume_sim(&mut self) {
-        self.send_sim_command(r#"{"cmd":"resume"}"#);
+        self.send_sim_command(r#"{"command":"resume"}"#);
+    }
+
+    /// Step the simulation by N ticks (default 1).
+    pub fn step_sim(&mut self, ticks: u32) {
+        self.send_sim_command(&format!(r#"{{"command":"step","ticks":{}}}"#, ticks.max(1)));
+    }
+
+    /// Set simulation timescale (1.0 = real-time, 2.0 = 2x, 0.5 = half).
+    pub fn set_timescale(&mut self, scale: f32) {
+        self.send_sim_command(&format!(r#"{{"command":"set_timescale","scale":{}}}"#, scale));
     }
 
     // =========================================================================
