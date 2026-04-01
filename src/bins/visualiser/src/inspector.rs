@@ -8,7 +8,7 @@
 //!   `inspect` command to the simulator requesting variable 0 (the current
 //!   position variable).
 //! - The simulator responds with an `inspect_response` JSON message containing
-//!   mean, variance, eta, lambda, and per-factor message summaries.
+//!   mean, variance, and per-factor message summaries.
 //! - `InspectorPlugin` drains `InspectInbox`, logs results with `tracing::info!`,
 //!   and stores the latest result in `LastInspectResult` resource for display.
 //! - A floating egui popup ("Variable Inspector") shows the last result.

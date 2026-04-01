@@ -198,6 +198,10 @@ fn detect_param_changes(
 
     if gbp_changed || timescale_changed {
         let mut q = outbox.0.lock().unwrap_or_else(|e| e.into_inner());
+        // Cap outbox to prevent unbounded growth while WS is disconnected.
+        while q.len() >= crate::state::WS_OUTBOX_CAP {
+            q.pop_front();
+        }
         if gbp_changed {
             q.push_back(params.to_set_params_json());
         }

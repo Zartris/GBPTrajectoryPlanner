@@ -16,6 +16,7 @@ pub struct InspectorVisible(pub bool);
 
 /// Maximum entries in the WS inbox queue before dropping oldest.
 pub const WS_INBOX_CAP: usize = 64;
+pub const WS_OUTBOX_CAP: usize = 32;
 
 /// Bevy resource: queue of incoming messages from WebSocket thread.
 #[derive(Resource, Default)]
@@ -355,7 +356,7 @@ impl LiveParams {
         format!(r#"{{"command":"set_timescale","scale":{}}}"#, self.timescale)
     }
 
-    /// Whether only the timescale changed (not the GBP params).
+    /// Whether any GBP parameter (excluding timescale) differs from `other`.
     pub fn gbp_params_differ_from(&self, other: &Self) -> bool {
         const EPS: f32 = 1e-6;
         let f = |a: f32, b: f32| (a - b).abs() > EPS;

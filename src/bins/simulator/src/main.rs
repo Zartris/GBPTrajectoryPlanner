@@ -121,7 +121,7 @@ async fn main() {
     let (bcast_tx, _) = broadcast::channel::<RobotBroadcast>(64);
 
     // Shared simulation state — checked by physics and agent tasks.
-    // -1 = running, 0 = paused, N>0 = run N ticks then pause.
+    // -1 = running, 0 = paused. Step counts are controlled via `tick_epoch`.
     let sim_state = Arc::new(AtomicI32::new(-1));
     // Tick interval in microseconds (default 20_000 = 50 Hz).
     let tick_interval_us = Arc::new(AtomicU32::new(20_000));
