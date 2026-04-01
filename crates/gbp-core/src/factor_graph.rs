@@ -8,7 +8,7 @@
 //! convergence.
 
 use heapless::Vec;
-use crate::factor_node::{Factor, FactorKind, FactorNode};
+use crate::factor_node::{FactorKind, FactorNode};
 use crate::variable_node::VariableNode;
 
 /// GBP factor graph with const-generic capacity.

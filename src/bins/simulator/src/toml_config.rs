@@ -89,30 +89,66 @@ impl From<TomlConfig> for GbpConfig {
     }
 }
 
-/// Validate config values. Panics with descriptive error on invalid values.
-pub fn validate(c: &GbpConfig) {
-    assert!(c.msg_damping >= 0.0 && c.msg_damping <= 1.0,
-        "msg_damping must be 0.0..=1.0, got {}", c.msg_damping);
-    assert!(c.internal_iters >= 1, "internal_iters must be >= 1");
-    assert!(c.external_iters >= 1, "external_iters must be >= 1");
-    assert!(c.sigma_dynamics > 0.0, "sigma_dynamics must be > 0.0");
-    assert!(c.gbp_timestep > 0.0, "gbp_timestep must be > 0.0");
-    assert!(c.d_safe > 0.0, "d_safe must be > 0.0");
-    assert!(c.sigma_interrobot > 0.0, "sigma_interrobot must be > 0.0");
-    assert!(c.ir_activation_range > 0.0, "ir_activation_range must be > 0.0");
-    assert!(c.ir_decay_alpha > 0.0, "ir_decay_alpha must be > 0.0");
-    assert!(c.front_damping >= 0.0 && c.front_damping <= 1.0,
-        "front_damping must be 0.0..=1.0, got {}", c.front_damping);
-    assert!(c.v_min < c.v_max_default,
-        "v_min ({}) must be < v_max_default ({})", c.v_min, c.v_max_default);
-    assert!(c.vb_kappa > 0.0, "vb_kappa must be > 0.0");
-    assert!(c.vb_margin > 0.0, "vb_margin must be > 0.0");
-    assert!(c.vb_max_precision > 0.0, "vb_max_precision must be > 0.0");
-    assert!(c.max_accel > 0.0, "max_accel must be > 0.0");
-    assert!(c.max_jerk > 0.0, "max_jerk must be > 0.0");
-    assert!(c.max_speed > 0.0, "max_speed must be > 0.0");
-    assert!(c.init_variance > 0.0, "init_variance must be > 0.0");
-    assert!(c.anchor_precision > 0.0, "anchor_precision must be > 0.0");
+/// Validate config values. Returns `Err` with a descriptive message on invalid values.
+pub fn validate(c: &GbpConfig) -> Result<(), String> {
+    if !(c.msg_damping >= 0.0 && c.msg_damping <= 1.0) {
+        return Err(format!("msg_damping must be 0.0..=1.0, got {}", c.msg_damping));
+    }
+    if c.internal_iters < 1 {
+        return Err("internal_iters must be >= 1".into());
+    }
+    if c.external_iters < 1 {
+        return Err("external_iters must be >= 1".into());
+    }
+    if !(c.sigma_dynamics > 0.0) {
+        return Err("sigma_dynamics must be > 0.0".into());
+    }
+    if !(c.gbp_timestep > 0.0) {
+        return Err("gbp_timestep must be > 0.0".into());
+    }
+    if !(c.d_safe > 0.0) {
+        return Err("d_safe must be > 0.0".into());
+    }
+    if !(c.sigma_interrobot > 0.0) {
+        return Err("sigma_interrobot must be > 0.0".into());
+    }
+    if !(c.ir_activation_range > 0.0) {
+        return Err("ir_activation_range must be > 0.0".into());
+    }
+    if !(c.ir_decay_alpha > 0.0) {
+        return Err("ir_decay_alpha must be > 0.0".into());
+    }
+    if !(c.front_damping >= 0.0 && c.front_damping <= 1.0) {
+        return Err(format!("front_damping must be 0.0..=1.0, got {}", c.front_damping));
+    }
+    if !(c.v_min < c.v_max_default) {
+        return Err(format!("v_min ({}) must be < v_max_default ({})", c.v_min, c.v_max_default));
+    }
+    if !(c.vb_kappa > 0.0) {
+        return Err("vb_kappa must be > 0.0".into());
+    }
+    if !(c.vb_margin > 0.0) {
+        return Err("vb_margin must be > 0.0".into());
+    }
+    if !(c.vb_max_precision > 0.0) {
+        return Err("vb_max_precision must be > 0.0".into());
+    }
+    if !(c.max_accel > 0.0) {
+        return Err("max_accel must be > 0.0".into());
+    }
+    if !(c.max_jerk > 0.0) {
+        return Err("max_jerk must be > 0.0".into());
+    }
+    if !(c.max_speed > 0.0) {
+        return Err("max_speed must be > 0.0".into());
+    }
+    if !(c.init_variance > 0.0) {
+        return Err("init_variance must be > 0.0".into());
+    }
+    if !(c.anchor_precision > 0.0) {
+        return Err("anchor_precision must be > 0.0".into());
+    }
+    Ok(())
 }
 
 /// Parse a config TOML string into a validated GbpConfig.
@@ -120,7 +156,7 @@ pub fn parse_config(toml_str: &str) -> GbpConfig {
     let tc: TomlConfig = toml::from_str(toml_str)
         .unwrap_or_else(|e| panic!("config TOML parse error: {}", e));
     let config: GbpConfig = tc.into();
-    validate(&config);
+    validate(&config).unwrap_or_else(|e| panic!("config validation error: {}", e));
     config
 }
 

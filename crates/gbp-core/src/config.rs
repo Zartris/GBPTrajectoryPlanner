@@ -6,6 +6,7 @@
 ///
 /// The Default impl provides the current battle-tested values.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 pub struct GbpConfig {
     // -- GBP solver --
     pub msg_damping: f32,

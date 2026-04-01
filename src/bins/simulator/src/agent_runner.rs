@@ -3,7 +3,7 @@
 //! Which edge the robot is on is derived from the trajectory, not managed by physics.
 
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use tokio::sync::{broadcast, watch};
 use tokio::time::{interval, Duration};
 use gbp_agent::{RobotAgent, robot_agent::InspectData};
@@ -182,7 +182,8 @@ pub struct StepOut {
 }
 
 /// Runs at configurable rate (default 50 Hz): reads global position, steps agent, writes velocity back.
-/// sim_state: -1 = running, 0 = paused, N>0 = step N ticks then pause.
+/// sim_state: -1 = running, 0 = paused (epoch-based step uses paused state).
+/// tick_epoch: global epoch counter; incremented by N when a step(N) command arrives.
 /// tick_interval_us: microseconds per tick (default 20_000 = 50 Hz).
 /// config_rx: watch receiver for live GbpConfig hot-reload.
 pub async fn agent_task(
@@ -191,11 +192,13 @@ pub async fn agent_task(
     tx: broadcast::Sender<RobotStateMsg>,
     robot_id: u32,
     sim_state: Arc<AtomicI32>,
+    tick_epoch: Arc<AtomicU64>,
     tick_interval_us: Arc<AtomicU32>,
     mut config_rx: watch::Receiver<GbpConfig>,
 ) {
     let mut current_us = tick_interval_us.load(Ordering::Relaxed);
     let mut ticker = interval(Duration::from_micros(current_us as u64));
+    let mut local_epoch: u64 = tick_epoch.load(Ordering::Relaxed);
     loop {
         ticker.tick().await;
 
@@ -215,14 +218,18 @@ pub async fn agent_task(
         }
 
         let state_val = sim_state.load(Ordering::Relaxed);
-        if state_val == 0 {
-            // Paused — skip.
-            continue;
-        } else if state_val > 0 {
-            // Step mode: run this tick. N physics_tasks each CAS-race to decrement;
-            // exactly one succeeds per tick, all run. Agent tasks never decrement.
+        if state_val == -1 {
+            // Free-running: proceed normally, advance local epoch to stay in sync.
+            local_epoch = tick_epoch.load(Ordering::Relaxed);
+        } else {
+            // Paused / step mode: only tick if behind the global epoch.
+            let global = tick_epoch.load(Ordering::Relaxed);
+            if local_epoch >= global {
+                continue;
+            }
+            local_epoch += 1;
         }
-        // state_val == -1 (running) or step mode: proceed with agent step.
+        // Free-running or epoch-based step: proceed with agent step.
 
         let global_s = physics.lock().unwrap_or_else(|e| e.into_inner()).position_s;
 

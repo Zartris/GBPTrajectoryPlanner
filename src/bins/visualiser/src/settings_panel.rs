@@ -187,7 +187,12 @@ fn detect_param_changes(
     mut last_sent: Local<Option<LiveParams>>,
 ) {
     let (gbp_changed, timescale_changed) = match last_sent.as_ref() {
-        None => (true, true), // first frame — send initial state
+        None => {
+            // First frame — initialize snapshot without sending, so we only
+            // send when the user actually changes something.
+            *last_sent = Some(params.clone());
+            return;
+        }
         Some(prev) => (params.gbp_params_differ_from(prev), params.timescale_differs_from(prev)),
     };
 

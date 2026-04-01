@@ -6,7 +6,7 @@ pub mod agent_runner;
 pub mod toml_config;
 
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -125,6 +125,9 @@ async fn main() {
     let sim_state = Arc::new(AtomicI32::new(-1));
     // Tick interval in microseconds (default 20_000 = 50 Hz).
     let tick_interval_us = Arc::new(AtomicU32::new(20_000));
+    // Epoch counter for step mode — incremented by N on step(N).
+    // Each task tracks its own local_epoch and only ticks when behind.
+    let tick_epoch = Arc::new(AtomicU64::new(0));
 
     // Relay: RobotStateMsg -> JSON
     // Envelope wraps any payload with a `"type"` discriminator in a single serialization pass,
@@ -208,6 +211,7 @@ async fn main() {
         tokio::spawn(physics::physics_task(
             Arc::clone(&physics),
             Arc::clone(&sim_state),
+            Arc::clone(&tick_epoch),
             Arc::clone(&tick_interval_us),
         ));
         tokio::spawn(agent_task(
@@ -216,6 +220,7 @@ async fn main() {
             tx_state.clone(),
             i as u32,
             Arc::clone(&sim_state),
+            Arc::clone(&tick_epoch),
             Arc::clone(&tick_interval_us),
             config_tx.subscribe(),
         ));
@@ -226,7 +231,7 @@ async fn main() {
 
     // ── N-robot collision monitor (10 Hz, pairwise 3D distance) ──
     let map_mon = Arc::clone(&map_arc);
-    let d_safe = config.d_safe;
+    let config_rx_mon = config_tx.subscribe();
     let tx_json_collision = tx_json.clone();
     tokio::spawn(async move {
         const CHASSIS_LEN: f32 = 1.15;
@@ -292,6 +297,7 @@ async fn main() {
                         if d < min_dist { min_dist = d; min_pair = (i, j); }
                     }
                 }
+                let d_safe = config_rx_mon.borrow().d_safe;
                 info!("MONITOR: {} robots, min_dist={:.2}m (R{}↔R{}), collisions={}, d_safe={}",
                     n, min_dist, min_pair.0, min_pair.1, collision_count, d_safe);
             }
@@ -300,6 +306,7 @@ async fn main() {
 
     // Command handler (pause/resume/step/set_timescale/set_params/inspect)
     let cmd_sim_state = Arc::clone(&sim_state);
+    let cmd_tick_epoch = Arc::clone(&tick_epoch);
     let cmd_tick_interval_us = Arc::clone(&tick_interval_us);
     let cmd_tx_json = tx_json.clone();
     // config_tx is moved into the command handler so it can send new configs.
@@ -318,12 +325,16 @@ async fn main() {
                         }
                         "step" => {
                             let ticks = (v.get("ticks")
-                                .and_then(|t| t.as_i64())
+                                .and_then(|t| t.as_u64())
                                 .unwrap_or(1)
                                 .max(1)
-                                .min(i32::MAX as i64)) as i32;
-                            cmd_sim_state.store(ticks, Ordering::Relaxed);
-                            info!("simulation STEP {} ticks", ticks);
+                                .min(10_000)) as u64;
+                            // Ensure sim is paused so tasks use epoch gating.
+                            cmd_sim_state.store(0, Ordering::Relaxed);
+                            // Advance global epoch — every task will run exactly `ticks` steps.
+                            cmd_tick_epoch.fetch_add(ticks, Ordering::Relaxed);
+                            info!("simulation STEP {} ticks (epoch={})",
+                                ticks, cmd_tick_epoch.load(Ordering::Relaxed));
                         }
                         "set_timescale" => {
                             if let Some(scale) = v.get("scale").and_then(|s| s.as_f64()) {
@@ -339,20 +350,20 @@ async fn main() {
                             }
                         }
                         "set_params" => {
-                            // Accept a partial TOML-like JSON object matching TomlConfig
-                            // structure, or a flat GbpConfig-like object. We use the
-                            // simplest approach: deserialize the "params" value as
-                            // TomlConfig and convert, falling back on missing fields.
+                            // The visualiser sends a flat JSON object matching GbpConfig
+                            // field names. Deserialize directly as GbpConfig.
                             if let Some(params_val) = v.get("params") {
-                                match serde_json::from_value::<toml_config::TomlConfig>(params_val.clone()) {
-                                    Ok(tc) => {
-                                        let new_config: GbpConfig = tc.into();
+                                match serde_json::from_value::<GbpConfig>(params_val.clone()) {
+                                    Ok(new_config) => {
                                         // Validate before propagating — reject nonsensical values
-                                        if let Err(e) = std::panic::catch_unwind(|| toml_config::validate(&new_config)) {
-                                            warn!("set_params: validation failed: {:?}", e);
-                                        } else {
-                                            let _ = config_tx.send(new_config);
-                                            info!("config updated via set_params: d_safe={}, v_max={}", new_config.d_safe, new_config.v_max_default);
+                                        match toml_config::validate(&new_config) {
+                                            Ok(()) => {
+                                                let _ = config_tx.send(new_config);
+                                                info!("config updated via set_params: d_safe={}, v_max={}", new_config.d_safe, new_config.v_max_default);
+                                            }
+                                            Err(e) => {
+                                                warn!("set_params: validation failed: {}", e);
+                                            }
                                         }
                                     }
                                     Err(e) => {

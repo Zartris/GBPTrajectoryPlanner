@@ -1,6 +1,6 @@
 // src/bins/simulator/src/physics.rs
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use tokio::time::{interval, Duration};
 
 /// Shared mutable physics state for one robot.
@@ -33,15 +33,18 @@ impl PhysicsState {
 }
 
 /// Runs at configurable rate (default 50 Hz), integrating position from velocity.
-/// sim_state: -1 = running, 0 = paused, N>0 = step N ticks then pause.
+/// sim_state: -1 = running, 0 = paused (epoch-based step uses paused state).
+/// tick_epoch: global epoch counter; incremented by N when a step(N) command arrives.
 /// tick_interval_us: microseconds per tick (default 20_000 = 50 Hz).
 pub async fn physics_task(
     state: Arc<Mutex<PhysicsState>>,
     sim_state: Arc<AtomicI32>,
+    tick_epoch: Arc<AtomicU64>,
     tick_interval_us: Arc<AtomicU32>,
 ) {
     let mut current_us = tick_interval_us.load(Ordering::Relaxed);
     let mut ticker = interval(Duration::from_micros(current_us as u64));
+    let mut local_epoch: u64 = tick_epoch.load(Ordering::Relaxed);
     loop {
         ticker.tick().await;
 
@@ -53,19 +56,20 @@ pub async fn physics_task(
         }
 
         let state_val = sim_state.load(Ordering::Relaxed);
-        if state_val == 0 {
-            // Paused — skip.
-            continue;
-        } else if state_val > 0 {
-            // Step mode: run this tick, then decrement. Use CAS to avoid races.
-            let _ = sim_state.compare_exchange(
-                state_val,
-                state_val - 1,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            );
+        if state_val == -1 {
+            // Free-running: proceed normally, advance local epoch to stay in sync.
+            local_epoch = tick_epoch.load(Ordering::Relaxed);
+        } else {
+            // Paused / step mode: only tick if behind the global epoch.
+            let global = tick_epoch.load(Ordering::Relaxed);
+            if local_epoch >= global {
+                // Already caught up — skip.
+                continue;
+            }
+            // Behind — run one tick and advance.
+            local_epoch += 1;
         }
-        // state_val == -1 (running) or step mode tick: integrate physics.
+
         let dt = current_us as f32 / 1_000_000.0;
         state.lock().unwrap_or_else(|e| e.into_inner()).step(dt);
     }
